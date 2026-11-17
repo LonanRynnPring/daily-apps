@@ -1,0 +1,54 @@
+name: Build and release APK
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps/**']
+  workflow_dispatch:
+    inputs:
+      app:
+        description: 'App folder name under apps/ (leave empty for newest)'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find app folder
+        id: find
+        run: |
+          APP="${{ github.event.inputs.app }}"
+          if [ -z "$APP" ]; then
+            APP=$(ls apps | sort | tail -n 1)
+          fi
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          echo "Building $APP"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build debug APK
+        working-directory: apps/${{ steps.find.outputs.app }}
+        run: gradle assembleDebug --no-daemon
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APP="${{ steps.find.outputs.app }}"
+          APK=$(ls apps/$APP/app/build/outputs/apk/debug/*.apk | head -n 1)
+          cp "$APK" "$APP.apk"
+          gh release create "$APP" "$APP.apk" --title "$APP" --notes "Debug-signed APK for $APP. Enable installs from unknown sources to sideload." || gh release upload "$APP" "$APP.apk" --clobber
