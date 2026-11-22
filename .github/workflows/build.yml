@@ -54,7 +54,7 @@ jobs:
           {
             echo "Build FAILED for $APP at $GITHUB_SHA"
             echo "=== key error lines ==="
-            grep -n -A3 -E 'error:|What went wrong|Execution failed|Could not|AAPT|Manifest' "apps/$APP/build.log" | head -150
+            grep -n -A3 -E ' error:|What went wrong|Execution failed|Could not|AAPT|\.xml:[0-9]' "apps/$APP/build.log" | head -150
             echo "=== end of log ==="
             tail -n 40 "apps/$APP/build.log"
           } > "$OUT" 2>&1 || true
