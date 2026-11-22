@@ -1,0 +1,64 @@
+Build FAILED for zz-build-test at 79eb35a5f0beb573205e3633ea02441d08953cc8
+=== key error lines ===
+13:> Task :app:createDebugCompatibleScreenManifests
+14-> Task :app:extractDeepLinksDebug
+15-> Task :app:parseDebugLocalResources
+16:> Task :app:processDebugMainManifest
+17:> Task :app:processDebugManifest
+18-> Task :app:mergeDebugShaders
+19:> Task :app:processDebugManifestForPackage
+20-> Task :app:compileDebugShaders NO-SOURCE
+21-> Task :app:generateDebugAssets UP-TO-DATE
+22-> Task :app:mergeDebugAssets
+--
+38:/home/runner/work/daily-apps/daily-apps/apps/zz-build-test/app/src/main/java/com/dailyapps/tapcounter/MainActivity.java:21: error: incompatible types: String cannot be converted to int
+39-        count = prefs.getInt("count", 0); int broken = "not a number";
+40-                                                       ^
+41-1 error
+--
+46:* What went wrong:
+47:Execution failed for task ':app:compileDebugJavaWithJavac'.
+48-> Compilation failed; see the compiler error output for details.
+49-
+50-* Try:
+=== end of log ===
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
+> Task :app:mergeDebugShaders
+> Task :app:processDebugManifestForPackage
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets
+> Task :app:compressDebugAssets
+> Task :app:desugarDebugFileDependencies
+> Task :app:processDebugJavaRes NO-SOURCE
+> Task :app:checkDebugDuplicateClasses
+> Task :app:mergeDebugStartupProfile
+> Task :app:mergeExtDexDebug
+> Task :app:mergeLibDexDebug
+> Task :app:mergeDebugJniLibFolders
+> Task :app:mergeDebugNativeLibs NO-SOURCE
+> Task :app:stripDebugDebugSymbols NO-SOURCE
+> Task :app:processDebugResources
+> Task :app:mergeDebugJavaResource
+> Task :app:validateSigningDebug
+
+> Task :app:compileDebugJavaWithJavac FAILED
+/home/runner/work/daily-apps/daily-apps/apps/zz-build-test/app/src/main/java/com/dailyapps/tapcounter/MainActivity.java:21: error: incompatible types: String cannot be converted to int
+        count = prefs.getInt("count", 0); int broken = "not a number";
+                                                       ^
+1 error
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run-1795341339449.json
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:compileDebugJavaWithJavac'.
+> Compilation failed; see the compiler error output for details.
+
+* Try:
+> Run with --info option to get more log output.
+> Run with --scan to get full insights.
+
+BUILD FAILED in 15s
+26 actionable tasks: 26 executed
