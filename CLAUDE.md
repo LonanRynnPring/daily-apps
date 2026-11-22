@@ -9,8 +9,18 @@ Each day, create ONE new small Android app in `apps/YYYY-MM-DD-short-name/`, the
 - Plain Java, `android.app.Activity`, views built in code. No AndroidX, no third-party dependencies, no network or special permissions unless the app really needs them. This keeps builds reliable.
 - Never build something a phone already ships with. Banned: stopwatch, timer, alarm, clock, calculator, torch/flashlight, notes, calendar, to-do list, compass, unit converter, voice recorder, tap/lap counters, QR scanner, basic dice or coin flip, basic random picker. Pick ideas with a real twist that a stock phone does not do, such as games, creative toys, generators, puzzles, simulations, visualisers, or niche tools for a specific hobby or situation.
 - Make it fun and substantial, not a toy: aim for something you would actually want to open again tomorrow. It should have real depth, for example multiple screens or game levels, scoring and high scores, custom drawing with Canvas/animation, sensors (accelerometer etc.), sound, vibration haptics, or procedural generation. Polish counts: good colours, clear layout, sensible touch targets, state saved with SharedPreferences or SQLite where useful. Multiple Java classes and files are fine.
-- Stay within the technical constraints so the build passes: complex is fine, fragile is not. Do not use dependencies, only the Android SDK. If a feature risks failing the build (obscure APIs, deprecated calls), pick a simpler route.
+- Stay within the technical constraints so the build passes: do not use dependencies, only the Android SDK. You cannot compile locally (no Android SDK in this sandbox), so write careful, conservative code, then verify with the build loop below. Because builds are verified and fixed automatically, you may be ambitious.
 - Works offline unless the idea truly needs a network.
 - Use a unique `applicationId` and `namespace`: `com.dailyapps.<shortname>`.
 - Only touch the new app's folder, `IDEAS.md`, `REQUESTS.md` (only to tick off an idea) and (if fixing a build) the workflow. Never edit older apps unless fixing a failed build.
-- One commit per day, message: `Add <app name>`.
+- One commit per day for the app, message: `Add <app name>`. Build fixes get their own commits, message: `Fix <app name> build`.
+
+## Build loop (required)
+You cannot compile locally, but GitHub Actions can. After pushing the app:
+1. Get the pushed commit: `SHA=$(git rev-parse HEAD)`.
+2. Run `bash scripts/wait-for-build.sh "$SHA"` with a tool timeout of about 10 minutes (600000 ms). It polls GitHub until the build finishes.
+3. Exit 0 means the build passed and the release is published: you are done.
+4. Exit 1 means the build failed and the script has printed the compiler errors. Fix the code in the new app's folder only, commit `Fix <app name> build`, push with `git -c push.negotiate=true push origin main`, and go back to step 1 with the new SHA. A `push negotiation failed` warning is harmless; check the result line.
+5. Exit 2 means it timed out: run the script once more with the same SHA. If it times out again, say so in your summary.
+6. Make at most 3 fix attempts. If it still fails, simplify or remove the risky feature so the app builds, rather than leaving it broken. If it still cannot be made to build, say plainly in your final summary that it failed and why.
+Failed-build logs are saved by the workflow on the `build-logs` branch; the script reads them for you. Do not commit to that branch.

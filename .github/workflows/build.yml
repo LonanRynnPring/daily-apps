@@ -41,8 +41,36 @@ jobs:
           gradle-version: '8.9'
 
       - name: Build debug APK
+        shell: bash
         working-directory: apps/${{ steps.find.outputs.app }}
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon --console=plain 2>&1 | tee build.log
+
+      - name: Save build errors to build-logs branch
+        if: failure()
+        run: |
+          APP="${{ steps.find.outputs.app }}"
+          SHORT="${GITHUB_SHA::7}"
+          OUT="/tmp/$APP-$SHORT.log"
+          {
+            echo "Build FAILED for $APP at $GITHUB_SHA"
+            echo "=== key error lines ==="
+            grep -n -A3 -E 'error:|What went wrong|Execution failed|Could not|AAPT|Manifest' "apps/$APP/build.log" | head -150
+            echo "=== end of log ==="
+            tail -n 40 "apps/$APP/build.log"
+          } > "$OUT" 2>&1 || true
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          if git ls-remote --exit-code --heads origin build-logs >/dev/null 2>&1; then
+            git fetch origin build-logs --depth=1
+            git checkout -q -B build-logs FETCH_HEAD
+          else
+            git checkout -q --orphan build-logs
+            git rm -rfq . || true
+          fi
+          cp "$OUT" "./$APP-$SHORT.log"
+          git add "$APP-$SHORT.log"
+          git commit -q -m "Build log for $APP at $SHORT"
+          git push origin build-logs
 
       - name: Publish release
         env:
