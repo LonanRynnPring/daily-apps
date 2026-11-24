@@ -4,15 +4,15 @@ import java.util.Random;
 
 /** A procedurally generated, verified-solvable gravity puzzle. Probes land on planets and can hop between them. */
 final class Level {
-    static final float W = 1f;
-    static final float H = 1.6f;
+    static final float W = 1.4f;
     static final float DT = 0.01f;
     static final float SPEED = 4f;
-    static final float MAXPULL = 0.35f;
-    static final int MAXP = 5;
+    static final float MAXPULL = 0.45f;
+    static final int MAXP = 6;
     private static final int SOLVER_CAP = 1500;
     private static final int BUCKETS = 12;
 
+    float h = 2.6f;
     float sx, sy, tx, ty;
     float tr = 0.055f;
     int n;
@@ -77,16 +77,16 @@ final class Level {
                     return 2;
                 }
             }
-            if (x < -0.4f || x > 1.4f || y < -0.4f || y > 2.0f) return 3;
+            if (x < -0.5f || x > W + 0.5f || y < -0.5f || y > l.h + 0.5f) return 3;
             return 0;
         }
     }
 
     static int planetCount(int num) {
-        if (num <= 3) return 2;
-        if (num <= 8) return 3;
-        if (num <= 16) return 4;
-        return 5;
+        if (num <= 3) return 3;
+        if (num <= 8) return 4;
+        if (num <= 16) return 5;
+        return 6;
     }
 
     static int minPar(int num) {
@@ -99,14 +99,14 @@ final class Level {
         return Math.max(3, 60 - 2 * num);
     }
 
-    static Level make(int num) {
+    static Level make(int num, float height) {
         Level best = null;
         Level last = null;
-        for (int att = 0; att < 60; att++) {
-            Level l = build(num, att);
+        for (int att = 0; att < 40; att++) {
+            Level l = build(num, att, height);
             last = l;
             if (l.n < 2) continue;
-            int par = l.solve(num >= 2 && att < 40);
+            int par = l.solve(num >= 2 && att < 28);
             if (par <= 0) continue;
             l.par = par;
             if (par >= minPar(num) && l.wins <= maxWins(num)) return l;
@@ -115,14 +115,15 @@ final class Level {
         return best != null ? best : last;
     }
 
-    private static Level build(int num, int att) {
+    private static Level build(int num, int att, float height) {
         Random r = new Random(num * 7919L + att * 104729L + 13L);
         Level l = new Level();
-        l.sx = 0.10f + r.nextFloat() * 0.15f;
-        l.sy = 0.30f + r.nextFloat() * 1.0f;
-        l.tx = 0.75f + r.nextFloat() * 0.15f;
-        l.ty = 0.30f + r.nextFloat() * 1.0f;
-        l.tr = Math.max(0.035f, 0.055f - num * 0.0007f);
+        l.h = height;
+        l.sx = W * (0.07f + r.nextFloat() * 0.11f);
+        l.sy = height * (0.14f + r.nextFloat() * 0.72f);
+        l.tx = W * (0.80f + r.nextFloat() * 0.13f);
+        l.ty = height * (0.14f + r.nextFloat() * 0.72f);
+        l.tr = Math.max(0.042f, 0.065f - num * 0.0008f);
         int count = planetCount(num);
         for (int i = 0; i < count; i++) {
             for (int tries = 0; tries < 40; tries++) {
@@ -135,19 +136,19 @@ final class Level {
                     float dx = l.tx - l.sx;
                     float dy = l.ty - l.sy;
                     float len = (float) Math.sqrt(dx * dx + dy * dy);
-                    float off = (r.nextFloat() - 0.5f) * 0.3f;
+                    float off = (r.nextFloat() - 0.5f) * 0.5f;
                     x = mx + (-dy / len) * off;
                     y = my + (dx / len) * off;
                 } else {
-                    x = 0.2f + r.nextFloat() * 0.6f;
-                    y = 0.2f + r.nextFloat() * 1.2f;
+                    x = W * (0.14f + r.nextFloat() * 0.72f);
+                    y = height * (0.10f + r.nextFloat() * 0.80f);
                 }
                 boolean ok = dist(x, y, l.sx, l.sy) > rad + 0.12f && dist(x, y, l.tx, l.ty) > rad + 0.10f;
                 for (int j = 0; j < l.n && ok; j++) {
                     if (dist(x, y, l.px[j], l.py[j]) < rad + l.pr[j] + 0.09f) ok = false;
                 }
                 if (!ok) continue;
-                float g = 9f * rad * rad;
+                float g = 11f * rad * rad;
                 if (i >= 1 && num >= 5 && r.nextFloat() < 0.35f) g = -g * 0.8f;
                 l.px[l.n] = x;
                 l.py[l.n] = y;

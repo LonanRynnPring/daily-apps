@@ -65,6 +65,7 @@ public class GameView extends View {
     private int downCell = -1;
 
     private float s, ox, oy;
+    private float worldH = 2.6f;
     private long lastNanos;
     private float time;
 
@@ -100,7 +101,7 @@ public class GameView extends View {
     }
 
     private int starsFor(int n) {
-        return prefs.getInt("s2_" + n, 0);
+        return prefs.getInt("s3_" + n, 0);
     }
 
     private int totalStars() {
@@ -110,11 +111,12 @@ public class GameView extends View {
     }
 
     private boolean unlocked(int n) {
-        int far = 0;
-        for (int i = 1; i <= MAXL; i++) {
-            if (starsFor(i) > 0) far = i;
+        if (starsFor(n) > 0) return true;
+        int rank = 0;
+        for (int i = 1; i < n; i++) {
+            if (starsFor(i) == 0) rank++;
         }
-        return n <= far + 4;
+        return rank < 3;
     }
 
     private Level cached(int n) {
@@ -128,7 +130,7 @@ public class GameView extends View {
         Thread t = new Thread(new Runnable() {
             @Override
             public void run() {
-                final Level l = Level.make(n);
+                final Level l = Level.make(n, worldH);
                 synchronized (cache) {
                     cache.put(n, l);
                 }
@@ -199,9 +201,18 @@ public class GameView extends View {
 
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-        s = Math.min(w / Level.W, h / Level.H);
+        float aspect = Math.max(1.5f, Math.min(2.4f, (float) h / Math.max(1, w)));
+        float newH = Level.W * aspect;
+        if (Math.abs(newH - worldH) > 0.001f) {
+            synchronized (cache) {
+                cache.clear();
+            }
+            worldH = newH;
+            if (mode != MENU) mode = MENU;
+        }
+        s = Math.min(w / Level.W, h / worldH);
         ox = (w - s * Level.W) / 2f;
-        oy = (h - s * Level.H) / 2f;
+        oy = (h - s * worldH) / 2f;
         btnBack.set(dp(8), dp(8), dp(60), dp(60));
         btnRetry.set(w - dp(60), dp(8), w - dp(8), dp(60));
         float bw = w * 0.62f;
@@ -264,12 +275,13 @@ public class GameView extends View {
         state = WON;
         int st = shots <= lv.par + 1 ? 3 : (shots <= lv.par + 3 ? 2 : 1);
         lastStars = st;
-        if (st > starsFor(level)) prefs.edit().putInt("s2_" + level, st).apply();
+        if (st > starsFor(level)) prefs.edit().putInt("s3_" + level, st).apply();
         buzz(HapticFeedbackConstants.LONG_PRESS);
         beep(ToneGenerator.TONE_PROP_ACK, 250);
     }
 
     private void fail() {
+        if (shots == 1) shots = 0;
         state = FAIL;
         failTimer = 0.7f;
         buzz(HapticFeedbackConstants.LONG_PRESS);
@@ -289,7 +301,7 @@ public class GameView extends View {
 
     private void resetShot() {
         if (state != FLY) return;
-        shots = Math.max(0, shots - 1);
+        if (shots == 1) shots = 0;
         state = AIM;
         trailN = 0;
         probe.reset(originX, originY, 0f, 0f);
@@ -401,7 +413,7 @@ public class GameView extends View {
         } else if (id == 2 || id == 4) {
             startLevel(level);
         } else if (id == 3) {
-            if (level < MAXL) startLevel(level + 1);
+            if (level < MAXL && unlocked(level + 1)) startLevel(level + 1);
             else mode = MENU;
         }
     }
@@ -472,7 +484,7 @@ public class GameView extends View {
         int w = getWidth();
         int h = getHeight();
         text(c, "ORBIT SLING", w / 2f, h * 0.09f, dp(34), 0xFFFFFFFF, Paint.Align.CENTER);
-        text(c, "\u2605 " + totalStars() + " / " + (MAXL * 3) + "   \u00B7   next 3 levels stay open",
+        text(c, "\u2605 " + totalStars() + " / " + (MAXL * 3) + "   \u00B7   3 open levels at a time",
                 w / 2f, h * 0.09f + dp(28), dp(12.5f), 0xFFA0A8D0, Paint.Align.CENTER);
         for (int i = 0; i < MAXL; i++) {
             int n = i + 1;
