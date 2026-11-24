@@ -56,7 +56,16 @@ public class GameView extends View {
     private int loadingFor;
     private final float[] trailX = new float[1200];
     private final float[] trailY = new float[1200];
+    private final float[] trailT = new float[1200];
     private int trailN;
+    private int trailStart;
+    private static final float TRAIL_LIFE = 3.5f;
+    private float flightTotal;
+    private float lastAvg, lastBest;
+    private boolean newBest;
+    private int searchKind;
+    private final RectF btnOrbit = new RectF();
+    private final RectF btnLong = new RectF();
     private float acc;
     private int lastStars;
 
@@ -168,7 +177,9 @@ public class GameView extends View {
         mode = PLAY;
         state = AIM;
         shots = 0;
+        flightTotal = 0f;
         trailN = 0;
+        trailStart = 0;
         dragging = false;
         probe.reset(originX, originY, 0f, 0f);
     }
@@ -231,6 +242,8 @@ public class GameView extends View {
         btnAgain.set(cx - bw / 2, top + bh + dp(12), cx + bw / 2, top + 2 * bh + dp(12));
         btnLevels.set(cx - bw / 2, top + 2 * bh + dp(24), cx + bw / 2, top + 3 * bh + dp(24));
         btnReset.set(cx - w * 0.28f, h - dp(84), cx + w * 0.28f, h - dp(30));
+        btnOrbit.set(w * 0.04f, h - dp(84), w * 0.49f, h - dp(30));
+        btnLong.set(w * 0.51f, h - dp(84), w * 0.96f, h - dp(30));
 
 
         float margin = w * 0.07f;
@@ -258,20 +271,28 @@ public class GameView extends View {
     // ------------------------------------------------------------------ logic
 
     private void addTrail() {
-        if (trailN >= trailX.length) {
-            int half = trailX.length / 2;
-            System.arraycopy(trailX, half, trailX, 0, trailN - half);
-            System.arraycopy(trailY, half, trailY, 0, trailN - half);
-            trailN -= half;
+        int cap = trailX.length;
+        int idx = (trailStart + trailN) % cap;
+        if (trailN == cap) {
+            trailStart = (trailStart + 1) % cap;
+        } else {
+            trailN++;
         }
-        trailX[trailN] = probe.x;
-        trailY[trailN] = probe.y;
-        trailN++;
+        trailX[idx] = probe.x;
+        trailY[idx] = probe.y;
+        trailT[idx] = time;
+    }
+
+    private void pruneTrail() {
+        int cap = trailX.length;
+        while (trailN > 0 && time - trailT[trailStart] > TRAIL_LIFE) {
+            trailStart = (trailStart + 1) % cap;
+            trailN--;
+        }
     }
 
     private void launch(float vx, float vy) {
         probe.reset(originX, originY, vx, vy);
-        trailN = 0;
         addTrail();
         state = FLY;
         acc = 0f;
@@ -284,13 +305,21 @@ public class GameView extends View {
         state = WON;
         int st = shots <= lv.par + 1 ? 3 : (shots <= lv.par + 3 ? 2 : 1);
         lastStars = st;
+        lastAvg = flightTotal / Math.max(1, shots);
+        float prevBest = prefs.getFloat("avg3_" + level, 0f);
+        newBest = lastAvg > prevBest;
+        lastBest = newBest ? lastAvg : prevBest;
+        if (newBest) prefs.edit().putFloat("avg3_" + level, lastAvg).apply();
         if (st > starsFor(level)) prefs.edit().putInt("s3_" + level, st).apply();
         buzz(HapticFeedbackConstants.LONG_PRESS);
         beep(ToneGenerator.TONE_PROP_ACK, 250);
     }
 
     private void fail() {
-        if (shots == 1) shots = 0;
+        if (shots == 1) {
+            shots = 0;
+            flightTotal = 0f;
+        }
         state = FAIL;
         failTimer = 0.7f;
         buzz(HapticFeedbackConstants.LONG_PRESS);
@@ -308,35 +337,39 @@ public class GameView extends View {
         beep(ToneGenerator.TONE_PROP_BEEP, 90);
     }
 
-    private void startSearch() {
+    private void startSearch(int kind) {
         if (state != AIM || lv == null) return;
         state = SEARCH;
+        searchKind = kind;
         stopSearch = false;
         final int id = ++searchId;
+        final int kindF = kind;
         final Level l = lv;
         final float x = originX;
         final float y = originY;
-        searchEnd = System.currentTimeMillis() + 10000L;
+        searchEnd = System.currentTimeMillis() + (kind == 0 ? 10000L : 5000L);
         final long deadline = searchEnd;
         Thread t = new Thread(new Runnable() {
             @Override
             public void run() {
-                final float[] res = l.findOrbit(x, y, deadline, new Level.Stop() {
+                Level.Stop stopper = new Level.Stop() {
                     @Override
                     public boolean stop() {
                         return stopSearch || id != searchId;
                     }
-                });
+                };
+                final float[] res = kindF == 0 ? l.findOrbit(x, y, deadline, stopper) : l.findLongShot(x, y, deadline, stopper);
                 post(new Runnable() {
                     @Override
                     public void run() {
                         if (id != searchId || state != SEARCH || mode != PLAY) return;
                         if (res == null) {
                             state = AIM;
-                            shotNote = "No long shot found from here";
+                            shotNote = kindF == 0 ? "No long shot found from here" : "No shot from here reaches the target";
                             return;
                         }
-                        if (res[2] >= Level.ORBIT_CAP) shotNote = "Orbit found!";
+                        if (kindF == 1) shotNote = "Long shot: " + oneDec(res[2] * Level.DT) + "s to target";
+                        else if (res[2] >= Level.ORBIT_CAP) shotNote = "Orbit found!";
                         else shotNote = "Longest shot found: " + (int) (res[2] * Level.DT) + "s";
                         state = AIM;
                         launch(res[0], res[1]);
@@ -349,14 +382,17 @@ public class GameView extends View {
 
     private void resetShot() {
         if (state != FLY) return;
-        if (shots == 1) shots = 0;
+        if (shots == 1) {
+            shots = 0;
+            flightTotal = 0f;
+        }
         state = AIM;
-        trailN = 0;
         probe.reset(originX, originY, 0f, 0f);
     }
 
     private void update(float dt) {
         time += dt;
+        pruneTrail();
         if (flashT > 0f) flashT -= dt;
         if (mode != PLAY) return;
         if (state == FLY) {
@@ -364,6 +400,7 @@ public class GameView extends View {
             while (acc >= Level.DT && state == FLY) {
                 acc -= Level.DT;
                 int st = probe.step(lv);
+                flightTotal += Level.DT;
                 if (probe.steps % 2 == 0) addTrail();
                 if (st == 1) win();
                 else if (st == 2) land();
@@ -373,7 +410,6 @@ public class GameView extends View {
             failTimer -= dt;
             if (failTimer <= 0f) {
                 state = AIM;
-                trailN = 0;
                 probe.reset(originX, originY, 0f, 0f);
             }
         }
@@ -389,7 +425,8 @@ public class GameView extends View {
             return 0;
         }
         if (state == FLY && btnReset.contains(x, y)) return 6;
-        if (state == AIM && btnReset.contains(x, y)) return 7;
+        if (state == AIM && btnOrbit.contains(x, y)) return 7;
+        if (state == AIM && btnLong.contains(x, y)) return 9;
         if (state == SEARCH && btnReset.contains(x, y)) return 8;
         if (btnBack.contains(x, y)) return 1;
         if (btnRetry.contains(x, y)) return 2;
@@ -459,7 +496,9 @@ public class GameView extends View {
         if (id == 6) {
             resetShot();
         } else if (id == 7) {
-            startSearch();
+            startSearch(0);
+        } else if (id == 9) {
+            startSearch(1);
         } else if (id == 8) {
             stopSearch = true;
         } else if (id == 1 || id == 5) {
@@ -616,9 +655,11 @@ public class GameView extends View {
         // trail
         paint.setStyle(Paint.Style.FILL);
         for (int i = 0; i < trailN; i++) {
-            float f = (float) i / Math.max(1, trailN);
-            paint.setColor(((int) (30 + 170 * f) << 24) | 0xFFFFFF);
-            c.drawCircle(wx(trailX[i]), wy(trailY[i]), dp(1.6f), paint);
+            int idx = (trailStart + i) % trailX.length;
+            float f = 1f - (time - trailT[idx]) / TRAIL_LIFE;
+            if (f <= 0f) continue;
+            paint.setColor(((int) (200 * f) << 24) | 0xFFFFFF);
+            c.drawCircle(wx(trailX[idx]), wy(trailY[idx]), dp(1.6f), paint);
         }
 
         // aim preview
@@ -669,16 +710,21 @@ public class GameView extends View {
         if (state == FAIL) {
             text(c, "Lost in space", getWidth() / 2f, getHeight() - dp(40), dp(15), 0xFFFF8A80, Paint.Align.CENTER);
         }
-        if (state == FLY || state == AIM || state == SEARCH) {
-            paint.setStyle(Paint.Style.FILL);
+        paint.setStyle(Paint.Style.FILL);
+        if (state == FLY || state == SEARCH) {
             paint.setColor(state == FLY ? 0x55FFFFFF : 0x663949AB);
             c.drawRoundRect(btnReset, dp(14), dp(14), paint);
-            String lab = state == FLY ? "Reset shot" : (state == AIM ? "Find orbit shot" : "Fire best now");
-            text(c, lab, btnReset.centerX(), btnReset.centerY() + dp(6), dp(17), 0xFFFFFFFF, Paint.Align.CENTER);
+            text(c, state == FLY ? "Reset shot" : "Fire best now", btnReset.centerX(), btnReset.centerY() + dp(6), dp(17), 0xFFFFFFFF, Paint.Align.CENTER);
+        } else if (state == AIM) {
+            paint.setColor(0x663949AB);
+            c.drawRoundRect(btnOrbit, dp(14), dp(14), paint);
+            c.drawRoundRect(btnLong, dp(14), dp(14), paint);
+            text(c, "Find orbit", btnOrbit.centerX(), btnOrbit.centerY() + dp(6), dp(16), 0xFFFFFFFF, Paint.Align.CENTER);
+            text(c, "Find long shot", btnLong.centerX(), btnLong.centerY() + dp(6), dp(16), 0xFFFFFFFF, Paint.Align.CENTER);
         }
         if (state == SEARCH) {
             long left = Math.max(0L, searchEnd - System.currentTimeMillis());
-            text(c, "Searching for an orbit... " + (left / 1000 + 1) + "s", getWidth() / 2f, btnReset.top - dp(14), dp(15), 0xFFFFE082, Paint.Align.CENTER);
+            text(c, (searchKind == 0 ? "Searching for an orbit... " : "Searching for a long shot... ") + (left / 1000 + 1) + "s", getWidth() / 2f, btnReset.top - dp(14), dp(15), 0xFFFFE082, Paint.Align.CENTER);
         } else if ((state == FLY || state == AIM) && shotNote.length() > 0) {
             text(c, shotNote, getWidth() / 2f, btnReset.top - dp(14), dp(14), 0xFF80DEEA, Paint.Align.CENTER);
         }
@@ -696,13 +742,18 @@ public class GameView extends View {
         text(c, "\u2039", btnBack.centerX(), btnBack.centerY() + dp(10), dp(32), 0xFFFFFFFF, Paint.Align.CENTER);
         text(c, "\u21BB", btnRetry.centerX(), btnRetry.centerY() + dp(9), dp(26), 0xFFFFFFFF, Paint.Align.CENTER);
         text(c, "Level " + level, w / 2f, dp(30), dp(18), 0xFFFFFFFF, Paint.Align.CENTER);
-        text(c, "Shots " + shots + "   \u00B7   3\u2605 in " + (lv.par + 1), w / 2f, dp(50), dp(12.5f), 0xFFA0A8D0, Paint.Align.CENTER);
+        text(c, "Shots " + shots + "   \u00B7   Avg " + oneDec(flightTotal / Math.max(1, shots)) + "s   \u00B7   3\u2605 in " + (lv.par + 1), w / 2f, dp(50), dp(12.5f), 0xFFA0A8D0, Paint.Align.CENTER);
         if (level == 1 && shots == 0 && state == AIM && !dragging) {
             text(c, "Drag back, release to sling. You can land on planets!", w / 2f, btnReset.top - dp(44), dp(14), 0xFFFFE082, Paint.Align.CENTER);
         }
         if (level >= 5 && level < 9 && shots == 0 && state == AIM && !dragging) {
             text(c, "Red worlds push the probe away", w / 2f, btnReset.top - dp(44), dp(13), 0xFFFF8A80, Paint.Align.CENTER);
         }
+    }
+
+    private String oneDec(float v) {
+        int t = Math.round(v * 10f);
+        return (t / 10) + "." + (t % 10);
     }
 
     private void drawWin(Canvas c) {
@@ -716,6 +767,8 @@ public class GameView extends View {
                 + (lastStars >= 3 ? "\u2605" : "\u2606");
         text(c, sv, w / 2f, h * 0.27f + dp(64), dp(52), 0xFFFFD54F, Paint.Align.CENTER);
         text(c, shots + (shots == 1 ? " shot" : " shots"), w / 2f, h * 0.27f + dp(94), dp(15), 0xFFA0A8D0, Paint.Align.CENTER);
+        text(c, "Avg shot time " + oneDec(lastAvg) + "s  \u00B7  " + (newBest ? "New best!" : "Best " + oneDec(lastBest) + "s"),
+                w / 2f, h * 0.27f + dp(120), dp(15), newBest ? 0xFF69F0AE : 0xFFA0A8D0, Paint.Align.CENTER);
         button(c, btnNext, level < MAXL ? "Next level \u203A" : "All done \u2013 Levels", 0xFF00C853);
         button(c, btnAgain, "Retry", 0xFF3949AB);
         button(c, btnLevels, "Levels", 0xFF3949AB);

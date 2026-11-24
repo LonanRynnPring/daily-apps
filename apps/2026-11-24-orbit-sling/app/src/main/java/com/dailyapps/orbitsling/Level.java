@@ -307,4 +307,68 @@ final class Level {
         if (best <= 0) return null;
         return new float[]{bvx, bvy, best};
     }
+
+    private int winScore(Probe p, float x, float y, float vx, float vy) {
+        p.reset(x, y, vx, vy);
+        while (true) {
+            int st = p.step(this);
+            if (st == 1) return p.steps;
+            if (st != 0) return 0;
+            if (p.steps >= ORBIT_CAP) return 0;
+        }
+    }
+
+    /**
+     * Searches for a launch velocity from (x, y) that reaches the target after the longest possible
+     * flight. Returns {vx, vy, steps} or null if no shot from here hits the target.
+     */
+    float[] findLongShot(float x, float y, long deadline, Stop stop) {
+        Probe p = new Probe();
+        int best = 0;
+        float bvx = 0f;
+        float bvy = 0f;
+        for (int a = 0; a < 180; a++) {
+            double ang = a * 2.0 * Math.PI / 180;
+            for (int k = 0; k < 14; k++) {
+                float v = (0.08f + 0.0285f * k) * SPEED;
+                float vx = (float) (Math.cos(ang) * v);
+                float vy = (float) (Math.sin(ang) * v);
+                int sc = winScore(p, x, y, vx, vy);
+                if (sc > best) {
+                    best = sc;
+                    bvx = vx;
+                    bvy = vy;
+                }
+            }
+            if (stop.stop() || System.currentTimeMillis() > deadline) break;
+        }
+        Random r = new Random(11);
+        float minV = 0.08f * SPEED;
+        float maxV = MAXPULL * SPEED;
+        while (!stop.stop() && System.currentTimeMillis() < deadline) {
+            float vx;
+            float vy;
+            if (best > 0 && r.nextInt(10) < 8) {
+                double sa = r.nextInt(3) == 0 ? 0.02 : (r.nextBoolean() ? 0.004 : 0.0007);
+                double ang = Math.atan2(bvy, bvx) + r.nextGaussian() * sa;
+                double mag = Math.sqrt(bvx * bvx + bvy * bvy) * (1.0 + r.nextGaussian() * sa);
+                mag = Math.max(minV, Math.min(maxV, mag));
+                vx = (float) (Math.cos(ang) * mag);
+                vy = (float) (Math.sin(ang) * mag);
+            } else {
+                double ang = r.nextDouble() * 2.0 * Math.PI;
+                double mag = minV + r.nextDouble() * (maxV - minV);
+                vx = (float) (Math.cos(ang) * mag);
+                vy = (float) (Math.sin(ang) * mag);
+            }
+            int sc = winScore(p, x, y, vx, vy);
+            if (sc > best) {
+                best = sc;
+                bvx = vx;
+                bvy = vy;
+            }
+        }
+        if (best <= 0) return null;
+        return new float[]{bvx, bvy, best};
+    }
 }
