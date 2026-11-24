@@ -11,6 +11,11 @@ final class Level {
     static final int MAXP = 6;
     private static final int SOLVER_CAP = 1500;
     private static final int BUCKETS = 12;
+    static final int ORBIT_CAP = 6000;
+
+    interface Stop {
+        boolean stop();
+    }
 
     float h = 2.6f;
     float sx, sy, tx, ty;
@@ -236,5 +241,70 @@ final class Level {
             }
         }
         return found;
+    }
+
+    private int flightScore(Probe p, float x, float y, float vx, float vy) {
+        p.reset(x, y, vx, vy);
+        while (true) {
+            int st = p.step(this);
+            if (st == 1) return 0;
+            if (st != 0) return p.steps;
+            if (p.steps >= ORBIT_CAP) return ORBIT_CAP;
+        }
+    }
+
+    /**
+     * Searches for a launch velocity from (x, y) that keeps the probe flying as long as possible
+     * (reaching ORBIT_CAP means a stable orbit or endless loop). Returns {vx, vy, steps} or null.
+     */
+    float[] findOrbit(float x, float y, long deadline, Stop stop) {
+        Probe p = new Probe();
+        int best = -1;
+        float bvx = 0f;
+        float bvy = 0f;
+        for (int a = 0; a < 120; a++) {
+            double ang = a * 2.0 * Math.PI / 120;
+            for (int k = 0; k < 10; k++) {
+                float v = (0.08f + 0.041f * k) * SPEED;
+                float vx = (float) (Math.cos(ang) * v);
+                float vy = (float) (Math.sin(ang) * v);
+                int sc = flightScore(p, x, y, vx, vy);
+                if (sc > best) {
+                    best = sc;
+                    bvx = vx;
+                    bvy = vy;
+                    if (best >= ORBIT_CAP) return new float[]{bvx, bvy, best};
+                }
+            }
+            if (stop.stop() || System.currentTimeMillis() > deadline) break;
+        }
+        Random r = new Random(7);
+        float minV = 0.08f * SPEED;
+        float maxV = MAXPULL * SPEED;
+        while (!stop.stop() && System.currentTimeMillis() < deadline) {
+            float vx;
+            float vy;
+            if (best > 0 && r.nextInt(10) < 7) {
+                double ang = Math.atan2(bvy, bvx) + r.nextGaussian() * (r.nextBoolean() ? 0.03 : 0.003);
+                double mag = Math.sqrt(bvx * bvx + bvy * bvy) * (1.0 + r.nextGaussian() * (r.nextBoolean() ? 0.03 : 0.003));
+                mag = Math.max(minV, Math.min(maxV, mag));
+                vx = (float) (Math.cos(ang) * mag);
+                vy = (float) (Math.sin(ang) * mag);
+            } else {
+                double ang = r.nextDouble() * 2.0 * Math.PI;
+                double mag = minV + r.nextDouble() * (maxV - minV);
+                vx = (float) (Math.cos(ang) * mag);
+                vy = (float) (Math.sin(ang) * mag);
+            }
+            int sc = flightScore(p, x, y, vx, vy);
+            if (sc > best) {
+                best = sc;
+                bvx = vx;
+                bvy = vy;
+                if (best >= ORBIT_CAP) break;
+            }
+        }
+        if (best <= 0) return null;
+        return new float[]{bvx, bvy, best};
     }
 }

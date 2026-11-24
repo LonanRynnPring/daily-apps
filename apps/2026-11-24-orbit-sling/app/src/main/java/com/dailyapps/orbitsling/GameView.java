@@ -23,6 +23,7 @@ public class GameView extends View {
     private static final int FLY = 1;
     private static final int WON = 2;
     private static final int FAIL = 3;
+    private static final int SEARCH = 4;
     private static final int MAXL = 30;
     private static final int COLS = 5;
     private static final int ROWS = 6;
@@ -75,6 +76,10 @@ public class GameView extends View {
     private final RectF btnAgain = new RectF();
     private final RectF btnLevels = new RectF();
     private final RectF btnReset = new RectF();
+    private volatile boolean stopSearch;
+    private int searchId;
+    private long searchEnd;
+    private String shotNote = "";
     private final RectF[] cells = new RectF[MAXL];
 
     public GameView(Context context) {
@@ -156,6 +161,8 @@ public class GameView extends View {
         generate(n + 1);
         level = n;
         lv = l;
+        searchId++;
+        shotNote = "";
         originX = lv.sx;
         originY = lv.sy;
         mode = PLAY;
@@ -167,6 +174,7 @@ public class GameView extends View {
     }
 
     boolean onBack() {
+        searchId++;
         if (mode == PLAY || mode == LOADING) {
             mode = MENU;
             return true;
@@ -223,6 +231,7 @@ public class GameView extends View {
         btnAgain.set(cx - bw / 2, top + bh + dp(12), cx + bw / 2, top + 2 * bh + dp(12));
         btnLevels.set(cx - bw / 2, top + 2 * bh + dp(24), cx + bw / 2, top + 3 * bh + dp(24));
         btnReset.set(cx - w * 0.28f, h - dp(84), cx + w * 0.28f, h - dp(30));
+
 
         float margin = w * 0.07f;
         float gridTop = h * 0.2f;
@@ -299,6 +308,45 @@ public class GameView extends View {
         beep(ToneGenerator.TONE_PROP_BEEP, 90);
     }
 
+    private void startSearch() {
+        if (state != AIM || lv == null) return;
+        state = SEARCH;
+        stopSearch = false;
+        final int id = ++searchId;
+        final Level l = lv;
+        final float x = originX;
+        final float y = originY;
+        searchEnd = System.currentTimeMillis() + 10000L;
+        final long deadline = searchEnd;
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final float[] res = l.findOrbit(x, y, deadline, new Level.Stop() {
+                    @Override
+                    public boolean stop() {
+                        return stopSearch || id != searchId;
+                    }
+                });
+                post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (id != searchId || state != SEARCH || mode != PLAY) return;
+                        if (res == null) {
+                            state = AIM;
+                            shotNote = "No long shot found from here";
+                            return;
+                        }
+                        if (res[2] >= Level.ORBIT_CAP) shotNote = "Orbit found!";
+                        else shotNote = "Longest shot found: " + (int) (res[2] * Level.DT) + "s";
+                        state = AIM;
+                        launch(res[0], res[1]);
+                    }
+                });
+            }
+        });
+        t.start();
+    }
+
     private void resetShot() {
         if (state != FLY) return;
         if (shots == 1) shots = 0;
@@ -341,6 +389,8 @@ public class GameView extends View {
             return 0;
         }
         if (state == FLY && btnReset.contains(x, y)) return 6;
+        if (state == AIM && btnReset.contains(x, y)) return 7;
+        if (state == SEARCH && btnReset.contains(x, y)) return 8;
         if (btnBack.contains(x, y)) return 1;
         if (btnRetry.contains(x, y)) return 2;
         return 0;
@@ -408,6 +458,10 @@ public class GameView extends View {
     private void handleButton(int id) {
         if (id == 6) {
             resetShot();
+        } else if (id == 7) {
+            startSearch();
+        } else if (id == 8) {
+            stopSearch = true;
         } else if (id == 1 || id == 5) {
             mode = MENU;
         } else if (id == 2 || id == 4) {
@@ -615,11 +669,18 @@ public class GameView extends View {
         if (state == FAIL) {
             text(c, "Lost in space", getWidth() / 2f, getHeight() - dp(40), dp(15), 0xFFFF8A80, Paint.Align.CENTER);
         }
-        if (state == FLY) {
+        if (state == FLY || state == AIM || state == SEARCH) {
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(0x55FFFFFF);
+            paint.setColor(state == FLY ? 0x55FFFFFF : 0x663949AB);
             c.drawRoundRect(btnReset, dp(14), dp(14), paint);
-            text(c, "Reset shot", btnReset.centerX(), btnReset.centerY() + dp(6), dp(18), 0xFFFFFFFF, Paint.Align.CENTER);
+            String lab = state == FLY ? "Reset shot" : (state == AIM ? "Find orbit shot" : "Fire best now");
+            text(c, lab, btnReset.centerX(), btnReset.centerY() + dp(6), dp(17), 0xFFFFFFFF, Paint.Align.CENTER);
+        }
+        if (state == SEARCH) {
+            long left = Math.max(0L, searchEnd - System.currentTimeMillis());
+            text(c, "Searching for an orbit... " + (left / 1000 + 1) + "s", getWidth() / 2f, btnReset.top - dp(14), dp(15), 0xFFFFE082, Paint.Align.CENTER);
+        } else if ((state == FLY || state == AIM) && shotNote.length() > 0) {
+            text(c, shotNote, getWidth() / 2f, btnReset.top - dp(14), dp(14), 0xFF80DEEA, Paint.Align.CENTER);
         }
 
         drawHud(c);
@@ -637,10 +698,10 @@ public class GameView extends View {
         text(c, "Level " + level, w / 2f, dp(30), dp(18), 0xFFFFFFFF, Paint.Align.CENTER);
         text(c, "Shots " + shots + "   \u00B7   3\u2605 in " + (lv.par + 1), w / 2f, dp(50), dp(12.5f), 0xFFA0A8D0, Paint.Align.CENTER);
         if (level == 1 && shots == 0 && state == AIM && !dragging) {
-            text(c, "Drag back, release to sling. You can land on planets!", w / 2f, getHeight() - dp(40), dp(14), 0xFFFFE082, Paint.Align.CENTER);
+            text(c, "Drag back, release to sling. You can land on planets!", w / 2f, btnReset.top - dp(44), dp(14), 0xFFFFE082, Paint.Align.CENTER);
         }
         if (level >= 5 && level < 9 && shots == 0 && state == AIM && !dragging) {
-            text(c, "Red worlds push the probe away", w / 2f, getHeight() - dp(40), dp(13), 0xFFFF8A80, Paint.Align.CENTER);
+            text(c, "Red worlds push the probe away", w / 2f, btnReset.top - dp(44), dp(13), 0xFFFF8A80, Paint.Align.CENTER);
         }
     }
 
