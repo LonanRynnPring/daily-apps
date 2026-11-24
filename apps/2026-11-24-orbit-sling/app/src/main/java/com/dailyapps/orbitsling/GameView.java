@@ -18,6 +18,7 @@ import java.util.Random;
 public class GameView extends View {
     private static final int MENU = 0;
     private static final int PLAY = 1;
+    private static final int LOADING = 2;
     private static final int AIM = 0;
     private static final int FLY = 1;
     private static final int WON = 2;
@@ -49,10 +50,11 @@ public class GameView extends View {
     private final Level.Probe preview = new Level.Probe();
     private int shots;
     private float failTimer;
-    private boolean crashed;
-    private float crashX, crashY;
-    private final float[] trailX = new float[1000];
-    private final float[] trailY = new float[1000];
+    private float originX, originY;
+    private float flashX, flashY, flashT;
+    private int loadingFor;
+    private final float[] trailX = new float[1200];
+    private final float[] trailY = new float[1200];
     private int trailN;
     private float acc;
     private int lastStars;
@@ -71,6 +73,7 @@ public class GameView extends View {
     private final RectF btnNext = new RectF();
     private final RectF btnAgain = new RectF();
     private final RectF btnLevels = new RectF();
+    private final RectF btnReset = new RectF();
     private final RectF[] cells = new RectF[MAXL];
 
     public GameView(Context context) {
@@ -97,7 +100,7 @@ public class GameView extends View {
     }
 
     private int starsFor(int n) {
-        return prefs.getInt("stars" + n, 0);
+        return prefs.getInt("s2_" + n, 0);
     }
 
     private int totalStars() {
@@ -107,31 +110,62 @@ public class GameView extends View {
     }
 
     private boolean unlocked(int n) {
-        return n == 1 || starsFor(n - 1) > 0;
+        int far = 0;
+        for (int i = 1; i <= MAXL; i++) {
+            if (starsFor(i) > 0) far = i;
+        }
+        return n <= far + 4;
     }
 
-    private Level getLevel(int n) {
-        Level l = cache.get(n);
-        if (l == null) {
-            l = Level.make(n);
-            cache.put(n, l);
+    private Level cached(int n) {
+        synchronized (cache) {
+            return cache.get(n);
         }
-        return l;
+    }
+
+    private void generate(final int n) {
+        if (n > MAXL || cached(n) != null) return;
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final Level l = Level.make(n);
+                synchronized (cache) {
+                    cache.put(n, l);
+                }
+                post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (mode == LOADING && loadingFor == n) startLevel(n);
+                    }
+                });
+            }
+        });
+        t.start();
     }
 
     private void startLevel(int n) {
+        Level l = cached(n);
+        if (l == null) {
+            loadingFor = n;
+            mode = LOADING;
+            generate(n);
+            return;
+        }
+        generate(n + 1);
         level = n;
-        lv = getLevel(n);
+        lv = l;
+        originX = lv.sx;
+        originY = lv.sy;
         mode = PLAY;
         state = AIM;
         shots = 0;
         trailN = 0;
         dragging = false;
-        probe.reset(lv, 0f, 0f);
+        probe.reset(originX, originY, 0f, 0f);
     }
 
     boolean onBack() {
-        if (mode == PLAY) {
+        if (mode == PLAY || mode == LOADING) {
             mode = MENU;
             return true;
         }
@@ -177,6 +211,7 @@ public class GameView extends View {
         btnNext.set(cx - bw / 2, top, cx + bw / 2, top + bh);
         btnAgain.set(cx - bw / 2, top + bh + dp(12), cx + bw / 2, top + 2 * bh + dp(12));
         btnLevels.set(cx - bw / 2, top + 2 * bh + dp(24), cx + bw / 2, top + 3 * bh + dp(24));
+        btnReset.set(cx - w * 0.28f, h - dp(84), cx + w * 0.28f, h - dp(30));
 
         float margin = w * 0.07f;
         float gridTop = h * 0.2f;
@@ -203,15 +238,19 @@ public class GameView extends View {
     // ------------------------------------------------------------------ logic
 
     private void addTrail() {
-        if (trailN < trailX.length) {
-            trailX[trailN] = probe.x;
-            trailY[trailN] = probe.y;
-            trailN++;
+        if (trailN >= trailX.length) {
+            int half = trailX.length / 2;
+            System.arraycopy(trailX, half, trailX, 0, trailN - half);
+            System.arraycopy(trailY, half, trailY, 0, trailN - half);
+            trailN -= half;
         }
+        trailX[trailN] = probe.x;
+        trailY[trailN] = probe.y;
+        trailN++;
     }
 
     private void launch(float vx, float vy) {
-        probe.reset(lv, vx, vy);
+        probe.reset(originX, originY, vx, vy);
         trailN = 0;
         addTrail();
         state = FLY;
@@ -223,27 +262,42 @@ public class GameView extends View {
 
     private void win() {
         state = WON;
-        int st = shots <= 2 ? 3 : (shots <= 4 ? 2 : 1);
+        int st = shots <= lv.par + 1 ? 3 : (shots <= lv.par + 3 ? 2 : 1);
         lastStars = st;
-        if (st > starsFor(level)) prefs.edit().putInt("stars" + level, st).apply();
+        if (st > starsFor(level)) prefs.edit().putInt("s2_" + level, st).apply();
         buzz(HapticFeedbackConstants.LONG_PRESS);
         beep(ToneGenerator.TONE_PROP_ACK, 250);
     }
 
-    private void fail(int code) {
+    private void fail() {
         state = FAIL;
-        failTimer = 0.9f;
-        crashed = code == 2;
-        crashX = probe.x;
-        crashY = probe.y;
-        if (crashed) {
-            buzz(HapticFeedbackConstants.LONG_PRESS);
-            beep(ToneGenerator.TONE_PROP_NACK, 200);
-        }
+        failTimer = 0.7f;
+        buzz(HapticFeedbackConstants.LONG_PRESS);
+        beep(ToneGenerator.TONE_PROP_NACK, 200);
+    }
+
+    private void land() {
+        originX = probe.x;
+        originY = probe.y;
+        flashX = originX;
+        flashY = originY;
+        flashT = 0.5f;
+        state = AIM;
+        buzz(HapticFeedbackConstants.KEYBOARD_TAP);
+        beep(ToneGenerator.TONE_PROP_BEEP, 90);
+    }
+
+    private void resetShot() {
+        if (state != FLY) return;
+        shots = Math.max(0, shots - 1);
+        state = AIM;
+        trailN = 0;
+        probe.reset(originX, originY, 0f, 0f);
     }
 
     private void update(float dt) {
         time += dt;
+        if (flashT > 0f) flashT -= dt;
         if (mode != PLAY) return;
         if (state == FLY) {
             acc += Math.min(dt, 0.05f);
@@ -252,13 +306,15 @@ public class GameView extends View {
                 int st = probe.step(lv);
                 if (probe.steps % 2 == 0) addTrail();
                 if (st == 1) win();
-                else if (st == 2 || st == 3) fail(st);
+                else if (st == 2) land();
+                else if (st == 3) fail();
             }
         } else if (state == FAIL) {
             failTimer -= dt;
             if (failTimer <= 0f) {
                 state = AIM;
                 trailN = 0;
+                probe.reset(originX, originY, 0f, 0f);
             }
         }
     }
@@ -272,6 +328,7 @@ public class GameView extends View {
             if (btnLevels.contains(x, y)) return 5;
             return 0;
         }
+        if (state == FLY && btnReset.contains(x, y)) return 6;
         if (btnBack.contains(x, y)) return 1;
         if (btnRetry.contains(x, y)) return 2;
         return 0;
@@ -297,6 +354,10 @@ public class GameView extends View {
                 if (c >= 0 && c == downCell && unlocked(c + 1)) startLevel(c + 1);
                 downCell = -1;
             }
+            return true;
+        }
+        if (mode == LOADING) {
+            if (a == MotionEvent.ACTION_UP && btnBack.contains(x, y)) mode = MENU;
             return true;
         }
         if (a == MotionEvent.ACTION_DOWN) {
@@ -333,7 +394,9 @@ public class GameView extends View {
     }
 
     private void handleButton(int id) {
-        if (id == 1 || id == 5) {
+        if (id == 6) {
+            resetShot();
+        } else if (id == 1 || id == 5) {
             mode = MENU;
         } else if (id == 2 || id == 4) {
             startLevel(level);
@@ -369,6 +432,7 @@ public class GameView extends View {
         c.drawColor(BG);
         drawStars(c);
         if (mode == MENU) drawMenu(c);
+        else if (mode == LOADING) drawLoading(c);
         else drawPlay(c);
         postInvalidateOnAnimation();
     }
@@ -392,11 +456,23 @@ public class GameView extends View {
         }
     }
 
+    private void drawLoading(Canvas c) {
+        int w = getWidth();
+        int h = getHeight();
+        String dots = "...".substring(0, 1 + (int) (time * 3f) % 3);
+        text(c, "Plotting orbits" + dots, w / 2f, h / 2f, dp(20), 0xFFFFFFFF, Paint.Align.CENTER);
+        text(c, "Level " + loadingFor, w / 2f, h / 2f + dp(30), dp(14), 0xFFA0A8D0, Paint.Align.CENTER);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(0x33FFFFFF);
+        c.drawRoundRect(btnBack, dp(12), dp(12), paint);
+        text(c, "\u2039", btnBack.centerX(), btnBack.centerY() + dp(10), dp(32), 0xFFFFFFFF, Paint.Align.CENTER);
+    }
+
     private void drawMenu(Canvas c) {
         int w = getWidth();
         int h = getHeight();
         text(c, "ORBIT SLING", w / 2f, h * 0.09f, dp(34), 0xFFFFFFFF, Paint.Align.CENTER);
-        text(c, "★ " + totalStars() + " / " + (MAXL * 3) + "   ·   fling the probe to the green target",
+        text(c, "\u2605 " + totalStars() + " / " + (MAXL * 3) + "   \u00B7   next 3 levels stay open",
                 w / 2f, h * 0.09f + dp(28), dp(12.5f), 0xFFA0A8D0, Paint.Align.CENTER);
         for (int i = 0; i < MAXL; i++) {
             int n = i + 1;
@@ -415,10 +491,10 @@ public class GameView extends View {
             float cx = r.centerX();
             if (open) {
                 text(c, String.valueOf(n), cx, r.centerY() + dp(2), r.width() * 0.34f, 0xFFFFFFFF, Paint.Align.CENTER);
-                String sv = st >= 3 ? "★★★" : (st == 2 ? "★★" : (st == 1 ? "★" : ""));
+                String sv = st >= 3 ? "\u2605\u2605\u2605" : (st == 2 ? "\u2605\u2605" : (st == 1 ? "\u2605" : ""));
                 text(c, sv, cx, r.bottom - r.height() * 0.14f, r.width() * 0.2f, 0xFFFFD54F, Paint.Align.CENTER);
             } else {
-                text(c, "·", cx, r.centerY() + dp(6), r.width() * 0.4f, 0xFF3A4066, Paint.Align.CENTER);
+                text(c, "\u00B7", cx, r.centerY() + dp(6), r.width() * 0.4f, 0xFF3A4066, Paint.Align.CENTER);
             }
         }
     }
@@ -480,13 +556,13 @@ public class GameView extends View {
         }
 
         // aim preview
-        float sxp = wx(lv.sx);
-        float syp = wy(lv.sy);
+        float sxp = wx(originX);
+        float syp = wy(originY);
         if (state == AIM && dragging) {
             float[] v = pullVelocity();
             if (v != null) {
-                int steps = Math.max(50, 170 - level * 4);
-                preview.reset(lv, v[0], v[1]);
+                int steps = Math.max(40, 140 - level * 4);
+                preview.reset(originX, originY, v[0], v[1]);
                 for (int i = 0; i < steps; i++) {
                     int st = preview.step(lv);
                     if (i % 3 == 0) {
@@ -516,15 +592,22 @@ public class GameView extends View {
             c.drawCircle(wx(probe.x), wy(probe.y), dp(10), paint);
             paint.setColor(0xFFFFFFFF);
             c.drawCircle(wx(probe.x), wy(probe.y), dp(5), paint);
-        } else if (state == FAIL && crashed) {
-            float f = 1f - failTimer / 0.9f;
+        }
+        if (flashT > 0f) {
+            float f = 1f - flashT / 0.5f;
             paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(dp(3));
-            paint.setColor(((int) (255 * (1f - f)) << 24) | 0xFF7043);
-            c.drawCircle(wx(crashX), wy(crashY), dp(8) + f * dp(46), paint);
+            paint.setStrokeWidth(dp(2.5f));
+            paint.setColor(((int) (220 * (1f - f)) << 24) | 0xFFFFFF);
+            c.drawCircle(wx(flashX), wy(flashY), dp(6) + f * dp(30), paint);
+        }
+        if (state == FAIL) {
+            text(c, "Lost in space", getWidth() / 2f, getHeight() - dp(40), dp(15), 0xFFFF8A80, Paint.Align.CENTER);
+        }
+        if (state == FLY) {
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(((int) (200 * (1f - f)) << 24) | 0xFFD54F);
-            c.drawCircle(wx(crashX), wy(crashY), dp(6) + f * dp(18), paint);
+            paint.setColor(0x55FFFFFF);
+            c.drawRoundRect(btnReset, dp(14), dp(14), paint);
+            text(c, "Reset shot", btnReset.centerX(), btnReset.centerY() + dp(6), dp(18), 0xFFFFFFFF, Paint.Align.CENTER);
         }
 
         drawHud(c);
@@ -537,14 +620,14 @@ public class GameView extends View {
         paint.setColor(0x33FFFFFF);
         c.drawRoundRect(btnBack, dp(12), dp(12), paint);
         c.drawRoundRect(btnRetry, dp(12), dp(12), paint);
-        text(c, "‹", btnBack.centerX(), btnBack.centerY() + dp(10), dp(32), 0xFFFFFFFF, Paint.Align.CENTER);
-        text(c, "↻", btnRetry.centerX(), btnRetry.centerY() + dp(9), dp(26), 0xFFFFFFFF, Paint.Align.CENTER);
+        text(c, "\u2039", btnBack.centerX(), btnBack.centerY() + dp(10), dp(32), 0xFFFFFFFF, Paint.Align.CENTER);
+        text(c, "\u21BB", btnRetry.centerX(), btnRetry.centerY() + dp(9), dp(26), 0xFFFFFFFF, Paint.Align.CENTER);
         text(c, "Level " + level, w / 2f, dp(30), dp(18), 0xFFFFFFFF, Paint.Align.CENTER);
-        text(c, "Shots " + shots + "   ·   3★ in 2", w / 2f, dp(50), dp(12.5f), 0xFFA0A8D0, Paint.Align.CENTER);
+        text(c, "Shots " + shots + "   \u00B7   3\u2605 in " + (lv.par + 1), w / 2f, dp(50), dp(12.5f), 0xFFA0A8D0, Paint.Align.CENTER);
         if (level == 1 && shots == 0 && state == AIM && !dragging) {
-            text(c, "Drag back anywhere, then release to sling", w / 2f, getHeight() - dp(40), dp(14), 0xFFFFE082, Paint.Align.CENTER);
+            text(c, "Drag back, release to sling. You can land on planets!", w / 2f, getHeight() - dp(40), dp(14), 0xFFFFE082, Paint.Align.CENTER);
         }
-        if (level >= 8 && shots == 0 && state == AIM && !dragging) {
+        if (level >= 5 && level < 9 && shots == 0 && state == AIM && !dragging) {
             text(c, "Red worlds push the probe away", w / 2f, getHeight() - dp(40), dp(13), 0xFFFF8A80, Paint.Align.CENTER);
         }
     }
@@ -556,11 +639,11 @@ public class GameView extends View {
         paint.setColor(0xB3050714);
         c.drawRect(0, 0, w, h, paint);
         text(c, "ORBIT COMPLETE", w / 2f, h * 0.27f, dp(28), 0xFFFFFFFF, Paint.Align.CENTER);
-        String sv = (lastStars >= 1 ? "★" : "☆") + (lastStars >= 2 ? "★" : "☆")
-                + (lastStars >= 3 ? "★" : "☆");
+        String sv = (lastStars >= 1 ? "\u2605" : "\u2606") + (lastStars >= 2 ? "\u2605" : "\u2606")
+                + (lastStars >= 3 ? "\u2605" : "\u2606");
         text(c, sv, w / 2f, h * 0.27f + dp(64), dp(52), 0xFFFFD54F, Paint.Align.CENTER);
         text(c, shots + (shots == 1 ? " shot" : " shots"), w / 2f, h * 0.27f + dp(94), dp(15), 0xFFA0A8D0, Paint.Align.CENTER);
-        button(c, btnNext, level < MAXL ? "Next level ›" : "All done – Levels", 0xFF00C853);
+        button(c, btnNext, level < MAXL ? "Next level \u203A" : "All done \u2013 Levels", 0xFF00C853);
         button(c, btnAgain, "Retry", 0xFF3949AB);
         button(c, btnLevels, "Levels", 0xFF3949AB);
     }
