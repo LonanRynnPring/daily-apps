@@ -1,0 +1,755 @@
+# C# Language
+
+Q: What is the difference between a value type and a reference type?
+A: A value type (struct, enum, int, bool, DateTime...) holds its data directly; assigning it copies the whole value. A reference type (class, string, array, delegate, record class) holds a reference to an object on the managed heap; assigning it copies the reference, so both variables point to the same object.
+Value types are not always on the stack: a struct field inside a class lives on the heap with that object. Value types can't be null unless wrapped in Nullable<T> (int?).
+
+Q: What is boxing and unboxing, and why should you care?
+A: Boxing wraps a value type in a heap-allocated object (e.g. assigning an int to object or to a non-generic interface). Unboxing casts it back and copies the value out.
+It costs an allocation plus GC pressure and a type check, so it matters in hot paths. Generics (List<int> instead of ArrayList) avoid it.
+
+Q: class vs struct vs record: when would you use each?
+A: class: reference semantics, identity matters, mutable state, inheritance.
+struct: small (roughly 16 bytes or less), short-lived values that are copied, ideally immutable (readonly struct), e.g. a Point or Money.
+record (record class): reference type with compiler-generated value-based equality, ToString, deconstruction and non-destructive mutation via `with`. Great for DTOs and immutable data. `record struct` gives the same features for a value type.
+
+Q: What does the `with` expression do on a record?
+A: It creates a copy of the record with some properties changed (non-destructive mutation), leaving the original untouched.
+```
+var p2 = p1 with { Name = "Ana" };
+```
+It works on records, record structs, and (since C# 10) plain structs and anonymous types.
+
+Q: What is the difference between `const` and `readonly`?
+A: const is a compile-time constant: it must be a primitive or string known at compile time, is implicitly static, and its value is baked into calling assemblies (so changing it needs recompiling consumers).
+readonly fields are set at runtime, in the declaration or constructor, can be any type, and can differ per instance. `static readonly` is the usual choice for shared "constants" that aren't primitive.
+
+Q: Explain `ref`, `out` and `in` parameters.
+A: ref: pass by reference; the variable must be initialised and the method may read and change it.
+out: pass by reference; the method must assign it before returning; the caller needn't initialise it (TryParse pattern).
+in: pass by readonly reference; avoids copying large structs while guaranteeing the method won't modify it.
+
+Q: What is the difference between `==` and `.Equals()`?
+A: For reference types, == by default compares references, while Equals can be overridden for value equality. string overloads == to compare contents. Records generate both to compare values.
+If you override Equals you must also override GetHashCode (equal objects must have equal hash codes) and should implement IEquatable<T> and operators ==/!= consistently.
+
+Q: What are nullable reference types (NRT)?
+A: A C# 8+ compiler feature (enabled with <Nullable>enable</Nullable>) where `string` means "should never be null" and `string?` means "may be null". The compiler does flow analysis and warns on possible null dereferences. It's only static analysis; there is no runtime change. Operators: ?. (null-conditional), ?? (null-coalescing), ??= and ! (null-forgiving).
+
+Q: What is a delegate? How do Func, Action and Predicate differ?
+A: A delegate is a type-safe function pointer: an object that references one or more methods with a matching signature.
+Action<T...> returns void, Func<T..., TResult> returns a value (the last type parameter), Predicate<T> takes T and returns bool. Lambdas and method groups convert to these.
+
+Q: What is the difference between a delegate and an event?
+A: An event is a delegate field wrapped with restricted access: outside code can only subscribe (+=) and unsubscribe (-=); only the declaring class can invoke it or reset it. This stops subscribers from wiping out each other's handlers or raising the event. Forgetting to unsubscribe from long-lived publishers is a classic memory leak.
+
+Q: What are extension methods?
+A: Static methods in a static class whose first parameter is marked with `this`, letting you call them as if they were instance methods on that type. LINQ is built on them. They can't access private members and are resolved at compile time; an instance method with the same signature always wins.
+
+Q: What is pattern matching in modern C#?
+A: Testing a value against a shape and extracting data in one step: type patterns (`if (o is Customer c)`), property patterns (`{ Age: > 18 }`), relational and logical patterns (`>= 0 and < 10`, `not null`), positional patterns for deconstructable types, and list patterns (`[1, .., var last]`, C# 11). Switch expressions combine these:
+```
+var fee = vehicle switch {
+  Car { Passengers: 0 } => 2.0m,
+  Bus b when b.Riders < 10 => 5.0m,
+  null => throw new ArgumentNullException(),
+  _ => 3.0m
+};
+```
+
+Q: What is the difference between IEnumerable<T> and IQueryable<T>?
+A: IEnumerable<T> runs queries in memory using delegates (LINQ to Objects). IQueryable<T> builds an expression tree that a provider (like EF Core) translates to something else, typically SQL, so filtering happens in the database.
+Calling AsEnumerable() or ToList() too early pulls all the data into memory and filters there, a common performance bug.
+
+Q: What does `yield return` do?
+A: It makes a method an iterator: the compiler generates a state machine implementing IEnumerable<T>/IEnumerator<T>. Items are produced lazily, one per MoveNext(), and the method runs only when enumerated. `yield break` ends the sequence. Exceptions and argument checks are also deferred until enumeration, which can surprise people.
+
+Q: What are generics constraints? Give examples.
+A: `where` clauses that restrict type arguments so you can use members safely: `where T : class` (reference type), `struct`, `new()` (has a parameterless constructor), `notnull`, `unmanaged`, a base class (`where T : Entity`) or an interface (`where T : IComparable<T>`). C# 11 also allows static abstract interface members, enabling generic maths (`where T : INumber<T>`).
+
+Q: What is covariance and contravariance?
+A: Variance lets generic interfaces and delegates convert between related type arguments.
+Covariance (`out T`): IEnumerable<string> can be used as IEnumerable<object> because T only comes out.
+Contravariance (`in T`): Action<object> can be used as Action<string> because T only goes in.
+It only works for interfaces and delegates with reference type arguments, not for classes like List<T>.
+
+Q: What is the difference between `string` and `StringBuilder`?
+A: string is immutable: every concatenation creates a new string. In loops this produces lots of garbage, O(n squared) copying. StringBuilder keeps a mutable buffer and is the right choice for building strings in loops. For a few fixed concatenations, interpolation or + is fine (the compiler optimises them).
+
+Q: What is `IDisposable` and the `using` statement for?
+A: IDisposable.Dispose releases unmanaged or expensive resources (file handles, sockets, DB connections) deterministically instead of waiting for the GC. `using` (block or C# 8 `using var` declaration) guarantees Dispose is called, even when an exception is thrown, by compiling to try/finally. IAsyncDisposable with `await using` is the async version.
+
+Q: What is the difference between `throw;` and `throw ex;`?
+A: `throw;` rethrows the current exception preserving its original stack trace. `throw ex;` resets the stack trace to the current line, losing where the error really happened. Use `throw;`, or wrap it in a new exception with the original as InnerException. ExceptionDispatchInfo.Capture(ex).Throw() preserves the trace when rethrowing later.
+
+Q: What are access modifiers in C#?
+A: public (anyone), private (the containing type only; the default for members), protected (the type and derived types), internal (same assembly; the default for top-level types), protected internal (same assembly OR derived types), private protected (derived types in the same assembly), and file (C# 11: visible only in the same source file).
+
+Q: What is the difference between an abstract class and an interface?
+A: An abstract class can hold state (fields), constructors and implemented members; a class can inherit only one. An interface defines a contract; a class can implement many. Since C# 8 interfaces can have default implementations and static members but still no instance fields.
+Use an abstract class for a shared base with common code in an "is-a" hierarchy; use interfaces for capabilities and to decouple code for DI and testing.
+
+Q: What is `sealed` used for?
+A: On a class it prevents inheritance; on an override it prevents further overriding. It signals design intent and lets the JIT devirtualise calls, a small performance win. Many teams seal classes by default unless they're designed for extension.
+
+Q: What is the difference between `virtual`, `override` and `new` on a method?
+A: virtual allows derived classes to override. override replaces the base implementation, and calls dispatch on the runtime type (polymorphism). `new` hides the base member: which method runs depends on the compile-time type of the variable, which is usually confusing and best avoided.
+
+Q: What are Span<T> and Memory<T>?
+A: Span<T> is a ref struct giving a type-safe view over contiguous memory (array, stack memory from stackalloc, native memory) without copying, e.g. slicing strings with AsSpan() without allocating. Because it's a ref struct it can only live on the stack: no fields in classes, no async methods, no boxing. Memory<T> is the heap-friendly counterpart that can be stored and used across await.
+
+Q: What does this print?
+```
+var list = new List<Action>();
+for (var i = 0; i < 3; i++)
+    list.Add(() => Console.Write(i));
+foreach (var a in list) a();
+```
+A: It prints 333. The lambdas capture the variable i, not its value, and a `for` loop has a single i shared across iterations, which is 3 when the actions run. Fix it by copying to a local inside the loop (`var j = i;`). A `foreach` loop variable is fresh per iteration (since C# 5), so foreach doesn't have this problem.
+
+M: Which of these is a value type?
+* DateTime
+- string
+- int[]
+- Exception
+E: DateTime is a struct. string, arrays and exceptions are reference types.
+
+M: What does `string? name` mean when nullable reference types are enabled?
+* The compiler treats name as possibly null and warns if you dereference it without checking
+- name is boxed into Nullable<string>
+- name defaults to an empty string
+- name can never be null at runtime
+E: NRT is compile-time analysis only. `string?` is still a normal string reference at runtime.
+
+M: What does `throw ex;` do differently from `throw;`?
+* It resets the stack trace to the current location
+- It wraps ex in an AggregateException
+- It swallows the exception
+- Nothing, they are identical
+E: Use `throw;` to preserve the original stack trace.
+
+M: Which keyword makes a parameter passed by readonly reference?
+* in
+- out
+- ref
+- params
+E: `in` passes by reference but the method can't modify it, which is useful for large structs.
+
+M: A record class compares instances for equality by...
+* Comparing the values of all its properties/fields
+- Reference only
+- Comparing GetHashCode only
+- Comparing ToString output
+E: Records get compiler-generated value-based equality.
+
+# OOP & SOLID
+
+Q: What are the four pillars of OOP?
+A: Encapsulation: hide internal state behind a public interface. Abstraction: expose what an object does, not how. Inheritance: derive a type from a base to reuse and specialise behaviour. Polymorphism: treat different types through a common base or interface, with calls dispatched to the right implementation at runtime.
+
+Q: Explain the Single Responsibility Principle.
+A: A class should have one reason to change: it should serve one actor or concern. E.g. an InvoiceService that calculates totals, emails PDFs and writes to the database has three reasons to change; split it into InvoiceCalculator, InvoiceMailer and InvoiceRepository. Smaller classes are easier to test and change safely.
+
+Q: Explain the Open/Closed Principle.
+A: Software entities should be open for extension but closed for modification: add new behaviour by adding code (a new class implementing an interface, a new strategy) rather than editing working code. E.g. replace a growing `switch (paymentType)` with an IPaymentMethod interface and one class per method.
+
+Q: Explain the Liskov Substitution Principle.
+A: Subtypes must be usable anywhere their base type is expected without breaking correctness. The classic violation is Square deriving from Rectangle: setting Width on a Square also changes Height, breaking code that assumes they're independent. Other warning signs: overrides that throw NotSupportedException, strengthen preconditions or weaken guarantees.
+
+Q: Explain the Interface Segregation Principle.
+A: Clients shouldn't be forced to depend on methods they don't use. Prefer several small, focused interfaces (IReader, IWriter) over one fat interface (IRepository with 30 methods), so implementers don't have to stub out irrelevant members and consumers depend only on what they need.
+
+Q: Explain the Dependency Inversion Principle.
+A: High-level modules shouldn't depend on low-level modules; both should depend on abstractions. E.g. OrderService depends on IEmailSender, not SmtpEmailSender. Implementations are supplied from outside, typically via constructor injection and a DI container, which makes code testable (you can inject fakes) and swappable.
+
+Q: Composition vs inheritance: which do you prefer and why?
+A: Generally favour composition: build behaviour by combining objects (has-a) rather than deep class hierarchies (is-a). Inheritance couples the child tightly to the parent's implementation (the fragile base class problem) and is fixed at compile time. Composition with interfaces is flexible, testable and can change at runtime. Use inheritance for genuine is-a relationships with a stable base.
+
+Q: What is the difference between overloading and overriding?
+A: Overloading: same method name, different parameter lists, in the same type; resolved at compile time. Overriding: a derived class provides a new implementation of a virtual/abstract base method with the same signature; resolved at runtime based on the object's actual type.
+
+Q: What is DRY, KISS and YAGNI?
+A: DRY (Don't Repeat Yourself): each piece of knowledge has one authoritative place, but don't merge code that only looks similar by coincidence. KISS (Keep It Simple): prefer the simplest solution that works. YAGNI (You Aren't Gonna Need It): don't build features or abstractions for imagined future needs.
+
+M: A Square class that inherits from Rectangle and changes Height whenever Width is set most clearly violates...
+* Liskov Substitution Principle
+- Single Responsibility Principle
+- Interface Segregation Principle
+- Open/Closed Principle
+E: Code expecting a Rectangle breaks when given a Square: an LSP violation.
+
+M: Depending on IEmailSender rather than SmtpEmailSender is an example of...
+* Dependency Inversion
+- Liskov Substitution
+- Encapsulation only
+- Overloading
+E: High-level code depends on an abstraction, and the implementation is injected.
+
+M: Replacing a growing switch over payment types with one class per payment method follows...
+* Open/Closed Principle
+- YAGNI
+- Interface Segregation
+- Law of Demeter
+E: New payment types are added as new classes without modifying existing code.
+
+# CLR, Memory & GC
+
+Q: What is the CLR and what does it do?
+A: The Common Language Runtime is .NET's execution engine. It loads assemblies, JIT-compiles IL (intermediate language) to native code, manages memory with the garbage collector, enforces type safety, handles exceptions and threads, and provides interop. C#, F# and VB all compile to IL that the CLR runs.
+
+Q: What is JIT compilation? What are tiered compilation and AOT?
+A: The JIT compiles IL to machine code at runtime, the first time each method is called. Tiered compilation first produces quick, lightly optimised code (tier 0), then recompiles hot methods with full optimisations (tier 1), using runtime data (dynamic PGO). Native AOT compiles everything ahead of time into a self-contained native binary: fast startup and small memory, but limited reflection and dynamic code.
+
+Q: How does the .NET garbage collector work?
+A: It's a generational, mark-and-compact tracing collector. Allocation is cheap (bump a pointer). When gen 0 fills, the GC marks reachable objects from roots (stack variables, statics, GC handles, CPU registers), reclaims the rest and compacts survivors, promoting them to gen 1, then gen 2. Most objects die young, so gen 0 collections are frequent and fast; full gen 2 collections are expensive.
+
+Q: What is the Large Object Heap?
+A: Objects of 85,000 bytes or more (typically big arrays) go on the LOH. It's collected only with gen 2 and isn't compacted by default, so it can fragment. Avoid repeatedly allocating large temporary buffers; reuse them with ArrayPool<T>.Shared instead.
+
+Q: What is a finalizer and why should you avoid it?
+A: A finalizer (~ClassName) runs on the finalizer thread some time after an object becomes unreachable, to release unmanaged resources. Finalizable objects survive an extra GC (they're promoted), the timing is unpredictable and the order isn't guaranteed. Prefer IDisposable for deterministic cleanup and SafeHandle for wrapping native handles. In the dispose pattern, Dispose calls GC.SuppressFinalize(this).
+
+Q: Can you have memory leaks in .NET? How?
+A: Yes, managed "leaks" are objects kept reachable unintentionally: event handlers on long-lived publishers that are never unsubscribed, static collections or caches that grow forever, captured closures, timers that aren't disposed, and DI mistakes like a singleton holding onto scoped services. Plus real leaks from undisposed unmanaged resources. Diagnose with dotnet-counters, dotnet-gcdump/dotnet-dump, or memory profilers.
+
+Q: Stack vs heap in .NET?
+A: Each thread has a stack holding method frames: local variables, parameters and return addresses. It's freed automatically when methods return. The managed heap holds reference-type objects (and boxed values) and is managed by the GC. Locals of value types usually live on the stack, but captured locals, async state and struct fields of classes end up on the heap.
+
+Q: What is the difference between .NET Framework, .NET Core and modern .NET?
+A: .NET Framework (up to 4.8.x) is Windows-only, in maintenance mode, and built into Windows. .NET Core was the cross-platform, open-source rewrite; from version 5 it's just called ".NET" (5, 6, 7, 8, 9...). Even-numbered releases are LTS (3 years of support), odd ones STS. New development should target modern .NET.
+
+M: Which objects are allocated on the Large Object Heap?
+* Objects of 85,000 bytes or more
+- Any object living longer than a minute
+- All arrays
+- Objects with finalizers
+E: The LOH threshold is 85,000 bytes; it's collected with gen 2.
+
+M: Why are gen 0 collections cheap?
+* Most objects die young, so few survivors need marking and compacting
+- They don't pause any threads
+- They only run when the app is idle
+- They skip reference types
+E: The generational hypothesis: most allocations are short-lived.
+
+M: What does GC.SuppressFinalize(this) in Dispose do?
+* Tells the GC it no longer needs to run this object's finalizer
+- Stops all garbage collection
+- Frees the object immediately
+- Prevents the object being disposed twice
+E: Resources were already released by Dispose, so the finalizer is skipped and the object can be collected sooner.
+
+# Async & Threading
+
+Q: What does `async`/`await` actually do?
+A: `async` lets a method use `await`; the compiler rewrites it into a state machine. At an await on an incomplete task, the method returns to its caller and registers a continuation; no thread is blocked while waiting (e.g. on I/O). When the task completes, execution resumes after the await, on the captured context if there is one (UI thread) or on a thread-pool thread.
+
+Q: Why is `async void` dangerous?
+A: The caller can't await it, so it can't know when it finishes, and exceptions can't be caught by the caller: they're raised on the SynchronizationContext and typically crash the process. Use async Task. The only legitimate use is event handlers.
+
+Q: Why shouldn't you call `.Result` or `.Wait()` on a task?
+A: It blocks a thread while waiting (sync over async). In environments with a single-threaded SynchronizationContext (WinForms/WPF, old ASP.NET) it can deadlock: the blocked thread is the one the continuation needs. In ASP.NET Core it wastes thread-pool threads and causes thread-pool starvation under load. It also wraps exceptions in AggregateException. Go "async all the way".
+
+Q: What does ConfigureAwait(false) do?
+A: It tells the awaiter not to resume on the captured SynchronizationContext, so the continuation runs on any thread-pool thread. It's recommended in general-purpose library code to avoid deadlocks and a little overhead. ASP.NET Core has no SynchronizationContext, so it matters less in app code there, but it's still good practice in libraries.
+
+Q: What is the difference between Task.Run and async I/O?
+A: Task.Run queues CPU-bound work to the thread pool: a thread is busy the whole time. Truly async I/O (HttpClient, file and DB async APIs) uses OS completion mechanisms: no thread is used while waiting. Don't wrap I/O in Task.Run in ASP.NET Core; it just moves the blocking to another thread.
+
+Q: How do you run several async operations concurrently?
+A: Start them all, then await them together:
+```
+var a = GetUserAsync(); var b = GetOrdersAsync();
+await Task.WhenAll(a, b);
+```
+Task.WhenAny returns the first to finish (useful for timeouts). For throttled concurrency over many items use Parallel.ForEachAsync with MaxDegreeOfParallelism, or a SemaphoreSlim.
+
+Q: What is a CancellationToken and how should you use it?
+A: A cooperative cancellation signal from a CancellationTokenSource. Accept a token in async methods, pass it down to every async call (HttpClient, EF Core), and check token.ThrowIfCancellationRequested() in long loops. Cancelled operations throw OperationCanceledException. ASP.NET Core provides HttpContext.RequestAborted, bound to an action's CancellationToken parameter.
+
+Q: What is ValueTask and when would you use it?
+A: A struct that can wrap either a result or a Task, avoiding an allocation when a method usually completes synchronously (e.g. a cache hit). Rules: await it only once, don't await it concurrently, and don't call .Result before completion. Default to Task unless profiling shows allocations matter.
+
+Q: How do you protect shared state between threads?
+A: lock (Monitor) for short critical sections, never on `this` or a string, and never await inside a lock. SemaphoreSlim with WaitAsync for async code. Interlocked for atomic counters. Concurrent collections (ConcurrentDictionary, Channel<T>). Or best of all, avoid shared mutable state with immutability or message passing.
+
+Q: What is a deadlock and how can you avoid one?
+A: Two or more threads each wait for a resource the other holds, so none proceed. Avoid it by always acquiring locks in a consistent order, keeping locks short, not calling unknown code while holding a lock, using timeouts (Monitor.TryEnter), and not blocking on async code (.Result) under a SynchronizationContext.
+
+Q: What is the difference between concurrency and parallelism?
+A: Concurrency is dealing with multiple tasks in overlapping time periods (e.g. a server handling many requests by interleaving them with async I/O). Parallelism is doing multiple computations at literally the same time on multiple cores (Parallel.For, PLINQ). Async is mainly about concurrency and scalability, not raw speed.
+
+Q: What is Channel<T> used for?
+A: A thread-safe, async producer/consumer queue (System.Threading.Channels). Producers write with WriteAsync; consumers read with `await foreach (var item in reader.ReadAllAsync())`. Bounded channels give backpressure. It's a common pattern for background processing in BackgroundService.
+
+M: In ASP.NET Core, what is the main problem with calling .Result on tasks in request code?
+* It blocks thread-pool threads, which can starve the pool under load
+- It always deadlocks immediately
+- It's a compile error
+- It runs the task twice
+E: ASP.NET Core has no SynchronizationContext, so classic deadlocks are unlikely, but blocking hurts scalability.
+
+M: Which is the correct way to await two independent calls concurrently?
+* Start both tasks, then await Task.WhenAll(t1, t2)
+- await t1; await t2; where each is created just before its await
+- Task.WaitAll inside an async method
+- Wrap each in Task.Run and call .Result
+E: Starting both before awaiting lets them overlap; WhenAll awaits both without blocking.
+
+M: When is `async void` acceptable?
+* For event handlers
+- For all fire-and-forget calls
+- In library code
+- For controller actions
+E: Elsewhere exceptions can't be observed and the caller can't await completion.
+
+M: What happens to the thread while awaiting a truly asynchronous network call?
+* It is released to do other work; no thread is blocked waiting
+- It sleeps until the call returns
+- It spins in a loop
+- A new thread is created for the wait
+E: Async I/O uses OS completion callbacks, which is why async improves server scalability.
+
+# LINQ & Collections
+
+Q: What is deferred execution in LINQ?
+A: Most LINQ operators (Where, Select, OrderBy...) don't run when declared; they build a query that executes when enumerated (foreach, ToList, Count, First). Enumerating twice runs the query twice, which can mean double DB calls or different results. Materialise with ToList()/ToArray() when you need a snapshot.
+
+Q: First vs FirstOrDefault vs Single vs SingleOrDefault?
+A: First: the first match, throws if none. FirstOrDefault: the first match or default (null/0). Single: exactly one match, throws if zero or more than one. SingleOrDefault: zero or one, default if none, throws if more than one. Use Single when duplicates indicate a bug; with EF, First translates to TOP(1) while Single uses TOP(2) to check.
+
+Q: What does SelectMany do?
+A: It flattens nested sequences: it projects each element to a sequence and concatenates the results.
+```
+var allOrderLines = customers.SelectMany(c => c.Orders).SelectMany(o => o.Lines);
+```
+It's also how you write cross joins and multiple `from` clauses in query syntax.
+
+Q: How does GroupBy work? Give an example.
+A: It groups elements by a key into IGrouping<TKey, TElement> sequences.
+```
+var totals = orders.GroupBy(o => o.CustomerId)
+    .Select(g => new { Customer = g.Key, Total = g.Sum(o => o.Amount) });
+```
+Since .NET 6, Chunk, MinBy/MaxBy and DistinctBy are also handy. .NET 9 adds CountBy and AggregateBy.
+
+Q: List<T> vs array vs LinkedList<T>: complexity?
+A: Array: fixed size, O(1) index. List<T>: dynamic array, O(1) index, amortised O(1) Add, O(n) insert/remove in the middle. LinkedList<T>: O(1) insert/remove given a node, O(n) lookup, poor cache locality. In practice List<T> wins almost always.
+
+Q: How does Dictionary<TKey,TValue> work and what's its complexity?
+A: It's a hash table: the key's GetHashCode picks a bucket and Equals resolves collisions. Average O(1) lookup, insert and remove; it degrades with bad hash codes. Keys must not change their hash while in the dictionary. Use TryGetValue to avoid a double lookup. HashSet<T> is the same idea for unique values.
+
+Q: Which collection would you use for: unique items, FIFO, LIFO, sorted keys, thread-safe map?
+A: Unique: HashSet<T>. FIFO: Queue<T>. LIFO: Stack<T>. Priority: PriorityQueue<TElement,TPriority>. Sorted keys: SortedDictionary/SortedSet (red-black tree, O(log n)). Thread-safe map: ConcurrentDictionary. Read-only snapshots: ImmutableArray / FrozenDictionary (.NET 8, very fast reads).
+
+Q: What does this LINQ query do and when does it hit the database (EF Core)?
+```
+var q = db.Orders.Where(o => o.Total > 100);
+var count = q.Count();
+var list = q.ToList();
+```
+A: Two separate SQL queries: Count() runs SELECT COUNT(*) with the WHERE clause, and ToList() runs a SELECT of the rows. Declaring q runs nothing (deferred execution). If you need both, materialise once and count in memory, or accept the two round trips deliberately.
+
+Q: Any() vs Count() > 0?
+A: Any() stops at the first element (or translates to EXISTS in SQL) and is O(1) on sequences, while Count() may enumerate the whole sequence for a plain IEnumerable. Prefer Any() to test for emptiness. On ICollection, Count is a property and is cheap either way.
+
+M: Which operator flattens a sequence of sequences?
+* SelectMany
+- Select
+- Zip
+- Concat on a single sequence
+E: SelectMany projects to sequences and flattens them.
+
+M: Single() on a sequence with two matching elements...
+* Throws InvalidOperationException
+- Returns the first match
+- Returns null
+- Returns the last match
+E: Single requires exactly one element.
+
+M: Average lookup complexity of Dictionary<TKey,TValue>?
+* O(1)
+- O(log n)
+- O(n)
+- O(n log n)
+E: It's a hash table; O(1) on average, assuming good hash codes.
+
+M: A LINQ Where(...) query on a List is executed...
+* When it is enumerated, e.g. by foreach or ToList()
+- Immediately when Where is called
+- On a background thread
+- Only once and then cached forever
+E: Deferred execution: re-enumerating reruns it.
+
+# ASP.NET Core
+
+Q: Describe the ASP.NET Core request pipeline.
+A: A request flows through an ordered chain of middleware components. Each can inspect or modify the HttpContext, call `next()` to pass it on, or short-circuit and write the response itself. The response then flows back through them in reverse. Typical order: exception handling, HSTS/HTTPS redirection, static files, routing, CORS, authentication, authorisation, then endpoints (controllers, minimal APIs).
+
+Q: Why does middleware order matter? Give an example.
+A: Middleware runs in the order it's registered. UseAuthentication must come before UseAuthorization (you need to know who the user is before checking permissions), and both must come after UseRouting and before the endpoints. Exception handling should be first so it wraps everything. UseCors must come before auth for preflight requests to work.
+
+Q: How do you write custom middleware?
+A: Either inline: `app.Use(async (ctx, next) => { /* before */ await next(ctx); /* after */ });` or as a class with a constructor taking RequestDelegate and an `InvokeAsync(HttpContext ctx)` method, registered with app.UseMiddleware<T>(). Middleware is effectively a singleton, so inject scoped services as InvokeAsync parameters, not into the constructor. Implementing IMiddleware gives per-request activation instead.
+
+Q: Explain the three DI service lifetimes.
+A: Transient: a new instance every time it's resolved; lightweight stateless services. Scoped: one instance per scope, which in ASP.NET Core means per HTTP request (DbContext is scoped). Singleton: one instance for the app's lifetime; it must be thread-safe.
+```
+builder.Services.AddScoped<IOrderService, OrderService>();
+```
+
+Q: What is a captive dependency?
+A: When a longer-lived service holds a shorter-lived one, e.g. a singleton injecting a scoped DbContext. The scoped instance gets "captured" and lives forever: it's shared across requests, isn't thread-safe and holds stale data. ASP.NET Core's scope validation throws on this in Development. Fix: inject IServiceScopeFactory and create a scope per unit of work (common in BackgroundService).
+
+Q: Controllers vs Minimal APIs?
+A: Controllers: classes deriving from ControllerBase with attributes, model binding, filters and conventions; well structured for large APIs. Minimal APIs (.NET 6+): map endpoints directly with lambdas (`app.MapGet("/todos/{id}", ...)`), less ceremony, slightly faster, with route groups, endpoint filters and TypedResults. Both run on the same routing and DI. The choice is mostly about style and team conventions.
+
+Q: How does configuration work in ASP.NET Core?
+A: IConfiguration merges providers in order, with later ones overriding earlier ones: appsettings.json, appsettings.{Environment}.json, user secrets (Development), environment variables, command-line args (plus Key Vault and others). Bind sections to typed classes with the Options pattern: `builder.Services.Configure<SmtpOptions>(config.GetSection("Smtp"))`, then inject IOptions<T>, IOptionsSnapshot<T> (per request, reloads) or IOptionsMonitor<T> (singleton, change notifications).
+
+Q: How do you handle errors globally in ASP.NET Core?
+A: Use UseExceptionHandler (in .NET 8 with an IExceptionHandler implementation) to catch unhandled exceptions, log them and return a consistent ProblemDetails (RFC 7807/9457) response, plus AddProblemDetails(). Use UseDeveloperExceptionPage in Development only. Don't leak stack traces to clients. For expected failures return proper status codes (400, 404, 409) rather than throwing.
+
+Q: Authentication vs authorisation in ASP.NET Core?
+A: Authentication establishes who the user is (cookie, JWT bearer, OpenID Connect) and produces a ClaimsPrincipal. Authorisation decides what they may do: [Authorize], roles, and policy-based authorisation (`AddAuthorization(o => o.AddPolicy("Admin", p => p.RequireClaim("role", "admin")))`), plus resource-based checks with IAuthorizationService.
+
+Q: How does JWT bearer authentication work?
+A: The client gets a signed token (header.payload.signature, base64url) from an identity provider after logging in, then sends it as `Authorization: Bearer <token>`. The API validates the signature, issuer, audience and expiry, with no session lookup, and builds the user's claims from the payload. Keep tokens short-lived, use refresh tokens, never put secrets in the payload (it's only encoded, not encrypted) and always use HTTPS.
+
+Q: What are filters in ASP.NET Core MVC?
+A: Hooks around action execution, run in stages: authorisation filters, resource filters, action filters (before/after the action, e.g. validation or logging), exception filters and result filters. They can be applied globally, per controller or per action. Middleware is broader (every request); filters have MVC context such as model state and action arguments.
+
+Q: What is model binding and validation?
+A: Model binding maps request data (route values, query string, headers, form, JSON body) to action parameters with [FromRoute], [FromQuery], [FromBody] and so on. Validation uses DataAnnotations ([Required], [Range]) or FluentValidation. With [ApiController], invalid models automatically return a 400 ValidationProblemDetails.
+
+Q: How would you run background work in ASP.NET Core?
+A: Implement BackgroundService (IHostedService) and override ExecuteAsync with a loop that honours the stoppingToken. Create a DI scope per iteration for scoped services. For a queue, combine it with Channel<T>. For durable, scheduled or retryable jobs use Hangfire or Quartz.NET, or an external queue (Azure Service Bus, RabbitMQ) with a worker service.
+
+Q: How do you use HttpClient correctly?
+A: Don't `new HttpClient()` per request (socket exhaustion), and don't keep one static client forever without care (stale DNS). Use IHttpClientFactory: AddHttpClient<TClient>() for typed clients, which pools handlers and rotates them. Add resilience with Microsoft.Extensions.Http.Resilience (Polly): retries with backoff, timeouts and circuit breakers.
+
+Q: What caching options exist in ASP.NET Core?
+A: IMemoryCache (in-process, fast, per instance), IDistributedCache (Redis or SQL, shared across instances), HybridCache (.NET 9: two-level with stampede protection), output caching (cache whole responses server-side) and response caching via HTTP headers. Think about expiration (absolute/sliding), invalidation and cache stampedes.
+
+Q: What is Kestrel?
+A: The cross-platform, high-performance web server built into ASP.NET Core. It can face the internet directly or sit behind a reverse proxy (IIS, Nginx, YARP, Azure Front Door) that handles TLS termination, load balancing and so on. Forwarded headers middleware then restores the original scheme and client IP.
+
+M: Which order is correct?
+* UseRouting, UseAuthentication, UseAuthorization, then map endpoints
+- UseAuthorization, UseAuthentication, UseRouting
+- Map endpoints, then UseAuthentication
+- UseAuthentication after UseAuthorization
+E: You must know who the user is (authentication) before deciding what they can do.
+
+M: What lifetime does AddDbContext use by default?
+* Scoped
+- Singleton
+- Transient
+- Pooled singleton
+E: One DbContext per request. AddDbContextPool reuses instances but they're still handed out per scope.
+
+M: A singleton service injects a scoped DbContext. This is called...
+* A captive dependency
+- A circular dependency
+- Service location
+- Property injection
+E: The scoped object is captured by the singleton and lives for the whole app.
+
+M: What problem does IHttpClientFactory solve?
+* Socket exhaustion and stale DNS from mismanaged HttpClient instances
+- JSON serialisation
+- Authentication tokens
+- Request routing
+E: It pools and rotates HttpMessageHandlers.
+
+M: Which options interface reloads per request and is scoped?
+* IOptionsSnapshot<T>
+- IOptions<T>
+- IOptionsMonitor<T>
+- IConfiguration
+E: IOptions is a singleton read once; IOptionsMonitor is a singleton with change notifications.
+
+# Entity Framework Core
+
+Q: What is EF Core and what are its main pieces?
+A: Microsoft's ORM: it maps classes to database tables. DbContext is a unit of work and session; DbSet<T> represents tables; LINQ queries are translated to SQL; the change tracker records modifications and SaveChanges writes them in a transaction; migrations evolve the schema from the model. It's configured by conventions, data annotations or the Fluent API in OnModelCreating.
+
+Q: What is the N+1 query problem and how do you fix it?
+A: Loading a list (1 query) then lazily loading related data for each item (N more queries). E.g. iterating orders and touching order.Customer with lazy loading on. Fix: eager load with Include/ThenInclude, project with Select to just the fields you need (often best), or use split queries for big graphs. Spot it by logging the SQL.
+
+Q: Eager vs lazy vs explicit loading?
+A: Eager: Include() loads related data in the same query. Lazy: navigation properties load automatically on first access (needs proxies or ILazyLoader); convenient but causes N+1 and surprise queries. Explicit: `context.Entry(order).Collection(o => o.Lines).Load()` loads on demand, deliberately. Projections with Select avoid loading entities at all.
+
+Q: What does AsNoTracking do?
+A: It tells EF not to put the queried entities in the change tracker. Faster and less memory for read-only queries (APIs returning data). You can't then SaveChanges on those entities without attaching them. AsNoTrackingWithIdentityResolution de-duplicates instances without tracking. You can also set it as the default query tracking behaviour.
+
+Q: How do migrations work?
+A: `dotnet ef migrations add Name` compares the current model to the last snapshot and generates a migration class with Up/Down methods. `dotnet ef database update` applies pending migrations, recorded in the __EFMigrationsHistory table. In production prefer generating idempotent SQL scripts or migration bundles reviewed in CI, rather than calling Migrate() at app startup across many instances.
+
+Q: How does EF Core handle concurrency conflicts?
+A: Optimistic concurrency: mark a concurrency token (a [Timestamp] rowversion column in SQL Server, or [ConcurrencyCheck]). UPDATE/DELETE statements include the original value in the WHERE clause; if no rows are affected EF throws DbUpdateConcurrencyException, and you decide how to resolve it: reload and retry, client wins, or ask the user.
+
+Q: What are ExecuteUpdate and ExecuteDelete?
+A: EF Core 7+ bulk operations that run a single UPDATE/DELETE statement directly in the database without loading entities or using the change tracker:
+```
+await db.Orders.Where(o => o.Created < cutoff).ExecuteDeleteAsync();
+```
+Much faster for set-based changes, but they bypass tracked entities and SaveChanges interceptors.
+
+Q: How do you avoid SQL injection with EF Core?
+A: LINQ queries are always parameterised. For raw SQL use FromSql/ExecuteSql with interpolated strings, which EF converts to parameters, or FromSqlRaw with explicit parameters. Never build SQL by concatenating user input into FromSqlRaw. The same goes for Dapper or ADO.NET: always use parameters.
+
+Q: What is a DbContext's lifetime and is it thread-safe?
+A: It's designed to be short-lived: one per unit of work, which is per request in web apps (scoped). It is NOT thread-safe: don't run parallel queries on the same instance (e.g. Task.WhenAll on two queries), or you get "A second operation was started on this context". Use IDbContextFactory<T> to create separate instances for parallel work or in singletons and Blazor.
+
+M: Which method avoids the change tracker for read-only queries?
+* AsNoTracking()
+- Include()
+- AsSplitQuery()
+- ToListAsync()
+E: AsNoTracking skips tracking for faster reads.
+
+M: Loading 50 blogs then touching blog.Posts on each with lazy loading causes...
+* 51 queries (N+1)
+- 1 query
+- 2 queries
+- A compile error
+E: One query for blogs plus one per blog for Posts. Use Include or projection.
+
+M: EF Core throws DbUpdateConcurrencyException when...
+* An update affects zero rows because the concurrency token changed
+- Two contexts exist at once
+- A migration is missing
+- A query times out
+E: That's optimistic concurrency via a rowversion or concurrency check.
+
+M: Why can't you run two queries in parallel on one DbContext?
+* DbContext is not thread-safe
+- SQL Server forbids it
+- EF caches only one query
+- Async queries are not supported
+E: Use separate contexts (IDbContextFactory) for parallel work.
+
+# APIs & HTTP
+
+Q: What makes an API RESTful?
+A: Resources identified by URLs (nouns: /orders/42), standard HTTP methods for operations, statelessness (each request carries everything needed), proper status codes, representations like JSON, cacheability, and a uniform interface. HATEOAS (hypermedia links) is the purist's extra that few APIs fully implement.
+
+Q: Explain the main HTTP methods and idempotency.
+A: GET reads (safe, idempotent). POST creates or runs actions (not idempotent). PUT replaces a resource fully (idempotent). PATCH partially updates (not necessarily idempotent). DELETE removes (idempotent: deleting twice leaves the same state). Idempotent means repeating the request has the same effect as doing it once, which matters for retries. For POSTs, use an idempotency key header to make retries safe.
+
+Q: Which status codes should you know?
+A: 200 OK, 201 Created (with a Location header), 202 Accepted (async processing), 204 No Content, 301/302/304 redirect / Not Modified, 400 Bad Request (validation), 401 Unauthorized (not authenticated), 403 Forbidden (authenticated but not allowed), 404 Not Found, 409 Conflict, 422 Unprocessable Entity, 429 Too Many Requests, 500 Internal Server Error, 502/503/504 gateway or unavailable.
+
+Q: How do you version an API?
+A: URL path (/api/v2/orders), the most visible and common; query string (?api-version=2.0); header (api-version: 2); or media type (Accept: application/vnd.company.v2+json). In .NET use the Asp.Versioning packages. Don't break existing clients: add new fields freely, but make breaking changes in a new version and deprecate the old one with notice.
+
+Q: How would you implement pagination?
+A: Offset/limit (?page=3&pageSize=20, which is Skip/Take in EF): simple, but slow for deep pages and unstable when data changes. Keyset/cursor pagination (?after=lastId, i.e. WHERE Id > @lastId ORDER BY Id): fast and stable, ideal for feeds and infinite scroll. Return metadata such as next links or cursors, cap pageSize, and always order deterministically.
+
+Q: What is CORS?
+A: Cross-Origin Resource Sharing: a browser security mechanism. By default JavaScript can't call an API on a different origin (scheme + host + port). The server opts in with headers like Access-Control-Allow-Origin, and for non-simple requests the browser first sends an OPTIONS preflight. Configure it in ASP.NET Core with AddCors/UseCors and specific origins, not AllowAnyOrigin together with credentials. CORS doesn't protect the server from non-browser clients.
+
+Q: REST vs gRPC vs GraphQL?
+A: REST: resource-based HTTP+JSON, universal and cacheable. gRPC: contract-first with Protobuf over HTTP/2, binary and fast, with streaming; great for service-to-service, limited in browsers. GraphQL: a single endpoint where clients query exactly the fields they need; avoids over- and under-fetching, but caching and complexity control are harder. .NET supports all three (gRPC built in, Hot Chocolate for GraphQL).
+
+Q: How do you secure a web API?
+A: HTTPS everywhere; authentication (JWT/OAuth 2.0/OpenID Connect via an identity provider); authorisation on every endpoint (deny by default, check resource ownership to prevent IDOR); input validation; parameterised queries; rate limiting (built-in AddRateLimiter); no secrets in code (Key Vault, user secrets); least-privilege DB accounts; security headers; logging without sensitive data; patched dependencies. Know the OWASP API Top 10.
+
+M: Which status code means authenticated but not allowed?
+* 403 Forbidden
+- 401 Unauthorized
+- 404 Not Found
+- 400 Bad Request
+E: 401 means not authenticated (despite the name); 403 means authenticated but lacking permission.
+
+M: Which HTTP method is NOT idempotent by definition?
+* POST
+- PUT
+- DELETE
+- GET
+E: Repeating a POST can create duplicates, hence idempotency keys.
+
+M: What status code should a successful POST that creates a resource return?
+* 201 Created, with a Location header
+- 200 OK only
+- 204 No Content
+- 202 Accepted always
+E: 201 plus the URL of the new resource (CreatedAtAction / TypedResults.Created).
+
+M: Keyset (cursor) pagination's main advantage over offset is...
+* Consistent performance on deep pages and stable results while data changes
+- It allows jumping to any page number
+- It needs no ORDER BY
+- It works without indexes
+E: WHERE Id > @last uses the index directly instead of skipping rows.
+
+# Testing
+
+Q: Unit vs integration vs end-to-end tests?
+A: Unit: test one unit (class or method) in isolation, fast, with dependencies faked. Integration: test components together with real infrastructure (database, HTTP pipeline), e.g. WebApplicationFactory with Testcontainers. End-to-end: drive the whole deployed system like a user (Playwright). The test pyramid: many unit tests, fewer integration tests, few E2E tests.
+
+Q: Which test frameworks and libraries are common in .NET?
+A: Frameworks: xUnit (most popular for new code: [Fact], [Theory] with [InlineData]), NUnit, MSTest. Mocking: Moq, NSubstitute, FakeItEasy. Assertions: FluentAssertions or Shouldly. Integration: Microsoft.AspNetCore.Mvc.Testing (WebApplicationFactory), Testcontainers, Respawn. Others: Bogus or AutoFixture for test data, Verify for snapshot tests, Stryker.NET for mutation testing.
+
+Q: What is the Arrange-Act-Assert pattern?
+A: Structure each test in three parts: Arrange (set up objects, fakes and inputs), Act (call the method under test, ideally one line) and Assert (verify the outcome). Name tests by behaviour, e.g. `PlaceOrder_WhenStockIsZero_ThrowsOutOfStock`. One logical behaviour per test keeps failures easy to diagnose.
+
+Q: Mock vs stub vs fake?
+A: Stub: returns canned answers to calls (state-based testing). Mock: verifies interactions, i.e. that a method was called with certain arguments (`mock.Verify(...)`). Fake: a working lightweight implementation (an in-memory repository, FakeTimeProvider). Over-mocking couples tests to implementation details; prefer asserting outcomes.
+
+Q: How do you test code that depends on DateTime.Now?
+A: Don't call DateTime.Now directly. Inject an abstraction: .NET 8's TimeProvider (use TimeProvider.System in production and FakeTimeProvider from Microsoft.Extensions.TimeProvider.Testing in tests, where you can advance time), or your own IClock. The same idea applies to randomness, file systems and environment variables.
+
+Q: What is TDD?
+A: Test-Driven Development: Red (write a failing test for the next small behaviour), Green (write the minimum code to pass), Refactor (clean up with the tests as a safety net). It drives a testable design and gives fast feedback. Be ready to give an honest, nuanced view of when you use it.
+
+Q: How would you integration-test an ASP.NET Core API?
+A: Use WebApplicationFactory<Program> to host the app in memory and get an HttpClient. Override services with WithWebHostBuilder/ConfigureTestServices (replace external APIs with fakes), use a real database via Testcontainers rather than the EF InMemory provider (which behaves differently), reset data between tests with Respawn, and assert on HTTP responses.
+
+M: In xUnit, which attribute marks a data-driven test?
+* [Theory]
+- [Fact]
+- [TestCase]
+- [DataTestMethod]
+E: [Theory] with [InlineData]/[MemberData]. [TestCase] is NUnit; [DataTestMethod] is MSTest.
+
+M: Which .NET 8 abstraction makes time-dependent code testable?
+* TimeProvider
+- DateTimeOffset
+- Stopwatch
+- Environment.TickCount
+E: Inject TimeProvider and use FakeTimeProvider in tests.
+
+M: Verifying that SendEmail was called once with a given address is using a...
+* Mock
+- Stub
+- Fake
+- Dummy
+E: Mocks verify interactions; stubs only return canned data.
+
+# Design Patterns & Architecture
+
+Q: Explain the Repository and Unit of Work patterns. Are they needed with EF Core?
+A: Repository abstracts data access behind a collection-like interface (IOrderRepository.GetById/Add); Unit of Work groups changes into one transaction. DbSet is already a repository and DbContext already a unit of work, so wrapping EF in a generic repository often adds little and hides useful features. Many teams use specific repositories for aggregate roots in DDD, or use DbContext directly in handlers. Be ready to argue both sides.
+
+Q: What is the Strategy pattern? Give a .NET example.
+A: Define a family of interchangeable algorithms behind one interface and choose one at runtime. E.g. IShippingCostCalculator with StandardShipping and ExpressShipping implementations, selected from DI (keyed services in .NET 8: AddKeyedScoped<IShipping, Express>("express")). It removes conditionals and follows Open/Closed.
+
+Q: What is the Decorator pattern?
+A: Wrap an object with another implementing the same interface to add behaviour (logging, caching, retries) without changing the original. E.g. CachedProductRepository wraps ProductRepository, both implementing IProductRepository. ASP.NET Core middleware, Stream wrappers (BufferedStream, GZipStream) and the Scrutor library's Decorate are examples.
+
+Q: What is the Singleton pattern and its drawbacks?
+A: It ensures a single instance with global access. In C# use `Lazy<T>` or a static readonly field for thread safety. Drawbacks: hidden global state, hard to test, tight coupling. In modern .NET prefer registering a singleton lifetime in the DI container over a hand-rolled static singleton.
+
+Q: Factory vs Abstract Factory vs Builder?
+A: Factory Method: a method that decides which concrete type to create (ILoggerFactory.CreateLogger). Abstract Factory: an interface for creating families of related objects. Builder: constructs a complex object step by step with a fluent API, e.g. WebApplication.CreateBuilder(), StringBuilder, or test data builders.
+
+Q: What is the Mediator pattern / CQRS?
+A: Mediator: objects communicate through a mediator instead of referencing each other. MediatR popularised `Send(new CreateOrderCommand())` with one handler per request and pipeline behaviours for cross-cutting concerns. CQRS (Command Query Responsibility Segregation) separates writes (commands that change state) from reads (queries), possibly with different models or stores. It adds complexity, so justify it.
+
+Q: What is Clean Architecture (or Onion/Hexagonal)?
+A: Layers with dependencies pointing inward: Domain (entities and rules, no dependencies) at the centre, then Application (use cases, interfaces), with Infrastructure (EF Core, email, external APIs) and Presentation (API) on the outside implementing the interfaces. Business logic stays independent of frameworks and testable. The trade-off is more projects and ceremony; vertical slice architecture, which organises by feature, is a popular alternative.
+
+Q: Monolith vs microservices?
+A: A monolith is one deployable: simple to develop, test and deploy, with in-process calls and ACID transactions. A modular monolith keeps clear module boundaries. Microservices are independently deployable services owned by teams; they scale and release independently, but you pay for distributed systems: network failures, eventual consistency, observability, versioning and DevOps maturity. Start with a modular monolith; split when there's a real need.
+
+Q: How do services communicate in a distributed system?
+A: Synchronously via HTTP/REST or gRPC (simple, but creates temporal coupling and cascading failures, so use timeouts, retries and circuit breakers), or asynchronously via messages and events on a broker (RabbitMQ, Azure Service Bus, Kafka) with MassTransit or NServiceBus. Async gives decoupling and resilience. Use the outbox pattern to publish events reliably alongside DB changes, and make consumers idempotent.
+
+Q: What does Domain-Driven Design mean to you?
+A: Model the software around the business domain with a ubiquitous language shared with domain experts. Strategic DDD: bounded contexts and context maps. Tactical DDD: entities (identity), value objects (immutable, equality by value, which records suit), aggregates with a root enforcing invariants, domain events, repositories per aggregate, and domain services. It's worth it for complex domains, overkill for CRUD.
+
+M: Wrapping a repository with a caching layer that implements the same interface is the...
+* Decorator pattern
+- Adapter pattern
+- Facade pattern
+- Observer pattern
+E: A decorator adds behaviour while keeping the same interface.
+
+M: In Clean Architecture, the Domain layer should depend on...
+* Nothing (no outer layers or frameworks)
+- Infrastructure
+- The Web API project
+- EF Core
+E: Dependencies point inward; the domain is the most independent layer.
+
+M: Which pattern reliably publishes events with a database change in the same transaction?
+* Transactional outbox
+- Saga
+- Circuit breaker
+- Strangler fig
+E: Write the event to an outbox table in the same transaction, then relay it to the broker.
+
+# SQL & Data
+
+Q: What is an index and what's the difference between clustered and non-clustered?
+A: An index is a B-tree structure that speeds up lookups at the cost of extra storage and slower writes. A clustered index defines the physical order of the table's rows (one per table, often the primary key). A non-clustered index is a separate structure with keys pointing to rows; many are allowed. Covering indexes INCLUDE extra columns to avoid key lookups. Index columns used in WHERE, JOIN and ORDER BY.
+
+Q: Explain the types of JOIN.
+A: INNER JOIN: only matching rows in both tables. LEFT (OUTER) JOIN: all rows from the left table plus matches, with NULLs where there's no match. RIGHT JOIN: the reverse. FULL OUTER JOIN: all rows from both. CROSS JOIN: the Cartesian product. A self join joins a table to itself (e.g. employee to manager).
+
+Q: What are ACID properties?
+A: Atomicity: a transaction is all or nothing. Consistency: it moves the database between valid states (constraints hold). Isolation: concurrent transactions don't interfere, depending on the isolation level. Durability: committed data survives crashes (the write-ahead log).
+
+Q: What are transaction isolation levels?
+A: Read Uncommitted (dirty reads possible), Read Committed (the default in SQL Server: no dirty reads, but non-repeatable reads), Repeatable Read (no non-repeatable reads, but phantoms possible), Serializable (full isolation, most locking), and Snapshot / Read Committed Snapshot (row versioning: readers don't block writers). Higher isolation means fewer anomalies but more blocking.
+
+Q: WHERE vs HAVING?
+A: WHERE filters rows before grouping and can't use aggregates. HAVING filters groups after GROUP BY and can use aggregates: `SELECT CustomerId, SUM(Total) FROM Orders GROUP BY CustomerId HAVING SUM(Total) > 1000`.
+
+Q: What is normalisation? When might you denormalise?
+A: Organising tables to reduce redundancy and update anomalies: 1NF (atomic values, no repeating groups), 2NF (no partial dependency on part of a composite key), 3NF (no transitive dependencies; non-key columns depend only on the key). Denormalise deliberately for read performance (reporting tables, cached totals, read models in CQRS), accepting the cost of keeping copies in sync.
+
+Q: Dapper vs EF Core?
+A: Dapper is a micro-ORM: you write the SQL and it maps results to objects. It's very fast, simple, with full control. EF Core is a full ORM: LINQ, change tracking, migrations and relationships. It's more productive for domain-heavy CRUD, and its performance is now close for most queries. Many teams use EF Core for writes and Dapper (or raw SQL) for complex reporting reads.
+
+Q: How would you find and fix a slow query?
+A: Measure first: Query Store, Extended Events, or EF logging and MiniProfiler/Application Insights on the app side. Look at the actual execution plan for scans, key lookups, bad estimates and implicit conversions. Fixes: add or adjust indexes (covering), make predicates SARGable (no functions on indexed columns), select fewer columns, fix N+1 in the app, update statistics, paginate, or cache.
+
+M: Which JOIN returns all rows from the left table even without a match?
+* LEFT JOIN
+- INNER JOIN
+- CROSS JOIN
+- SELF JOIN
+E: Unmatched right-side columns come back as NULL.
+
+M: Filtering on an aggregate like SUM(Total) > 100 requires...
+* HAVING
+- WHERE
+- ORDER BY
+- DISTINCT
+E: WHERE runs before grouping; HAVING filters groups.
+
+M: How many clustered indexes can a table have?
+* One
+- Unlimited
+- One per column
+- 249
+E: The clustered index is the physical order of the rows.
+
+# Behavioural
+
+Q: Tell me about yourself.
+A: Aim for 60 to 90 seconds: present (current role, stack, e.g. "C# and ASP.NET Core APIs on Azure"), past (one or two relevant highlights with impact) and future (why this role and company). Tailor it to the job description. Practise it out loud; don't recite your CV.
+
+Q: Tell me about a challenging bug you fixed.
+A: Use STAR: Situation, Task, Action, Result. Pick a real technical story (a memory leak, race condition, slow query or production incident). Explain how you narrowed it down (logs, metrics, reproducing it, profilers), the root cause, the fix and the measurable result, plus what you changed to prevent a recurrence (tests, alerts, process).
+
+Q: Describe a time you disagreed with a teammate or lead.
+A: Show you can disagree respectfully and commit. STAR: what the disagreement was (e.g. an architecture choice), how you sought to understand their view, used data or a spike or prototype to compare, kept it about the problem not the person, and what was decided. It's fine if your idea wasn't chosen; show you supported the outcome.
+
+Q: Tell me about a project you're proud of.
+A: Pick something with clear impact you personally drove. Cover the problem, your role, the key technical decisions and trade-offs (why this approach, what alternatives you considered), the challenges, and quantified results (latency down 40%, release time from days to hours). Be ready for deep follow-up questions on any detail you mention.
+
+Q: How do you keep your skills up to date?
+A: Be specific and genuine: e.g. following the .NET blog and release notes, ASP.NET Community Standup, Nick Chapsas or Milan Jovanovic content, reading Andrew Lock's blog, side projects trying new features (Native AOT, Aspire), contributing to or reading open source, conference talks, and sharing knowledge in your team.
+
+Q: What would you do if you realised you'd miss a deadline?
+A: Raise it early, with options rather than surprises: explain the cause, propose alternatives (cut or defer scope, add help, adjust the date), give a realistic new estimate, and agree on a decision with stakeholders. Afterwards, reflect on why the estimate was off.
+
+Q: Why do you want to work here? What questions do you have for us?
+A: Research the company: product, tech stack, engineering blog, values. Connect them to your experience and goals. Always have questions ready: "What does a typical week look like?", "How do you handle code review and deployments?", "What are the biggest technical challenges right now?", "How do you measure success in the first 6 months?", "What's the team's approach to testing and tech debt?"
+
+Q: Tell me about a time you made a mistake.
+A: Choose a real, moderately sized mistake (e.g. a deployment that broke a feature). Own it without blaming others, explain how you mitigated it quickly, communicated, fixed the root cause and what you changed afterwards (a checklist, automated tests, feature flags). Interviewers want self-awareness and learning, not perfection.
